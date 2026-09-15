@@ -211,11 +211,6 @@ class ResPartner(models.Model):
             ruc_num = vat.split("-", 1)[0]
         else:
             ruc_num = "".join(c for c in vat if c.isdigit())
-            # Odoo 19 (base_vat._run_vat_checks) reescribe el vat en la forma
-            # compacta "NNNNNNNND": si ya trae un DV válido, no hay que
-            # agregarle otro.
-            if ruc_num and RUCValidator.validate(ruc_num)[0]:
-                ruc_num = ruc_num[:-1]
 
         if ruc_num and ruc_num.isdigit() and len(ruc_num) >= 6:
             dv = str(RUCValidator._calculate_check_digit(ruc_num))
@@ -326,16 +321,15 @@ class ResPartner(models.Model):
     # ============== VAT VALIDATION ==============
 
     def format_vat_py(self, vat):
-        """Formato canónico ``NNNNNNNN-D`` para ``base_vat._format_vat_number``.
+        """Hook de ``base_vat._format_vat_number`` para Paraguay.
 
-        Odoo 19 formatea el vat con ``stdnum.py.vat.compact`` (sin guion) y lo
-        reescribe en el partner cuando difiere. Devolviendo siempre la forma
-        con guion, el valor validado coincide con el almacenado y no se
-        producen reescrituras ni dobles dígitos verificadores.
+        Sin este método Odoo 19 formatea el vat con ``stdnum.py.vat.compact``
+        (quita el guion) y lo reescribe en el partner; ``_format_vat_py``
+        tomaría luego ese valor compacto como base sin DV. El formato canónico
+        ``NNNNNNNN-D`` lo garantiza ``_format_vat_py`` en create/write, así que
+        aquí solo se normalizan espacios.
         """
-        if not vat:
-            return vat
-        return RUCValidator.format_ruc(vat)
+        return (vat or "").strip()
 
     def check_vat_py(self, vat):
         """Validate a Paraguayan RUC, check digit included.
