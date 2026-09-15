@@ -216,9 +216,9 @@ class TestKudeGeneration(TransactionCase):
         )
         move = self._create_invoice_with_xml()
         # el XML de un DE aprobado es inmutable salvo reemplazo explícito
-        move.with_context(l10n_py_edi_replace_xml=True).l10n_py_edi_xml = (
-            base64.b64encode(xml_with_accents.encode("utf-8"))
-        )
+        move.with_context(
+            l10n_py_edi_replace_xml=True
+        ).l10n_py_edi_xml = base64.b64encode(xml_with_accents.encode("utf-8"))
         move._generate_kude()
 
         mock_auto_kude.assert_called_once_with(xml=xml_with_accents, config=ANY)

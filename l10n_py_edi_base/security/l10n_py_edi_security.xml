@@ -1,8 +1,40 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <odoo noupdate="1">
-    <record id="group_edi_manager" model="res.groups">
-        <field name="name">EDI Manager</field>
+    <!-- Operar: enviar, consultar estado, cancelar, inutilizar -->
+    <record id="group_edi_user" model="res.groups">
+        <field name="name">EDI Paraguay / Usuario</field>
         <field name="privilege_id" ref="account.res_groups_privilege_accounting" />
-        <field name="implied_ids" eval="[(4, ref('account.group_account_manager'))]" />
+        <field name="implied_ids" eval="[(4, ref('account.group_account_invoice'))]" />
+    </record>
+    <!-- Configurar: conectores, credenciales, certificados, timbrados -->
+    <record id="group_edi_manager" model="res.groups">
+        <field name="name">EDI Paraguay / Responsable</field>
+        <field name="privilege_id" ref="account.res_groups_privilege_accounting" />
+        <field
+            name="implied_ids"
+            eval="[(4, ref('account.group_account_manager')), (4, ref('group_edi_user'))]"
+        />
+    </record>
+    <record id="base.group_system" model="res.groups">
+        <field name="implied_ids" eval="[(4, ref('group_edi_manager'))]" />
+    </record>
+
+    <!-- Reglas multi-compañía -->
+    <record id="rule_edi_connector_company" model="ir.rule">
+        <field name="name">Conector EDI: multi-compañía</field>
+        <field name="model_id" ref="model_l10n_py_edi_connector" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="rule_edi_log_company" model="ir.rule">
+        <field name="name">Log EDI: multi-compañía</field>
+        <field name="model_id" ref="model_l10n_py_edi_log" />
+        <field
+            name="domain_force"
+        >['|', ('document_id', '=', False), ('document_id.company_id', 'in', company_ids)]</field>
+    </record>
+    <record id="rule_number_inutilization_company" model="ir.rule">
+        <field name="name">Inutilización: multi-compañía</field>
+        <field name="model_id" ref="model_l10n_py_number_inutilization" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
     </record>
 </odoo>

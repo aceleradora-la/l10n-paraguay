@@ -1,47 +1,40 @@
 # Paraguay - Electronic Invoicing Base
 
-This module provides the base functionality for electronic invoicing (facturación electrónica) in Paraguay, compliant with SET (Subsecretaría de Estado de Tributación) requirements.
+Base module for electronic invoicing (SIFEN / e-Kuatia, DNIT) in Paraguay.
+It knows **what** has to be sent (the canonical document, validated) and
+delegates **how** it is sent to a connector module: direct SOAP transmission
+to the DNIT web services or a REST intermediary. The user interface, the
+document states and the reports are the same whatever the connector.
 
 ## Features
 
-### Document Types Support
-- **Factura Electrónica**: Electronic invoice
-- **Nota de Crédito Electrónica**: Electronic credit note
-- **Nota de Débito Electrónica**: Electronic debit note
-- **Nota de Remisión Electrónica**: Electronic delivery note
-- **Autofactura Electrónica**: Electronic self-invoice
+- Document types: Factura, Nota de Crédito, Nota de Débito, Nota de Remisión
+  and Autofactura electrónica (`iTiDE` 1, 5, 6, 7, 4).
+- Canonical document builder (`account.move._prepare_edi_document_data()`):
+  a JSON-like dict mirroring the SIFEN XSD groups, shared by every connector.
+- VAT breakdown driven by `account.tax` (`l10n_py_iva_affectation`,
+  `l10n_py_iva_rate`, `l10n_py_taxable_proportion`): taxed, exonerated,
+  exempt and partially taxed items; discounts; single rounding point
+  (`_l10n_py_round()`, guaraní without decimals).
+- Connector interface (`l10n_py.edi.connector`) with capabilities
+  (`batch`, `async`, `events`, `pdf`, `ruc_query`, `contingency`, `preview`)
+  and a **normalised result contract**: `status`
+  (`accepted`, `accepted_obs`, `processing`, `rejected`, `error`), documents
+  (`cdc`, `qr`, `xml`, `pdf`, `protocol`, `approval_date`, `digest`), errors
+  `(code, message, source)` where `source` tells SIFEN rejections apart from
+  intermediary/transport failures, and `retryable`.
+- State machine on the invoice: `to_send → sent → accepted/accepted_obs/
+  rejected/error`, `processing` with polling (`check_status`, cron),
+  `to_cancel → cancelled`. Approved documents cannot be reset to draft and
+  their XML is immutable.
+- Cancellation event with the legal deadline counted from the SIFEN approval
+  (48 h FE/AFE, 168 h NCE/NDE/NRE), number range inutilization, contingency
+  flag with automatic re-transmission.
+- CDC (44 digits, modulo 11), QR link (`cHashQR` with the CSC), KuDE report,
+  operation log, associated documents (group H), transport data (group G).
 
-### Core Functionality
-- **Data Models**: Complete models for electronic documents
-- **Field Extensions**: Enhanced account.move, res.partner, and res.company
-- **Fiscal Validation**: RUC and DV validation
-- **JSON Builder**: Automatic generation of JSON for SIFEN
-- **QR Code Generation**: Ready for KUDE (Código Único de Documento Electrónico)
-- **Log System**: Complete audit trail of EDI operations
+## Connectors
 
-### Compliance
-- **SIFEN Compatible**: Sistema Integrado de Facturación Electrónica Nacional
-- **SET Requirements**: Meets all SET regulatory requirements
-- **Contingency Mode**: Support for offline operation
-- **KUDE Support**: Ready for electronic document codes
-
-### Integration Ready
-This is a base module that requires a connector:
-- `l10n_py_edi_factpy`: FactPy integration
-- `l10n_py_edi_facturasend`: FacturaSend integration
-
-## Technical Architecture
-
-- **Provider-agnostic**: Works with multiple EDI providers
-- **Extensible**: Easy to add new document types
-- **Robust**: Error handling and retry mechanisms
-- **Auditable**: Complete logging of all operations
-
-## Dependencies
-
-- `account`: Core accounting
-- `l10n_py_base`: Base Paraguayan localization
-- `l10n_py_account`: Accounting extensions (timbrado management)
-- `product`: Product management
-- `sale`: Sales management
-
+- `l10n_py_edi_sifen`: direct SIFEN transmission (this repository).
+- Other connectors (FacturaSend, direct with `signxml`, a dummy provider for
+  tests) live in <https://github.com/aceleradora-la/odoo-paraguay>.

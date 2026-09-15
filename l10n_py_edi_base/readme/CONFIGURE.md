@@ -1,129 +1,33 @@
 # Configuration
 
-## Initial Setup
+1. **Company**: RUC (without check digit), trade name, economic activity,
+   SET department/district/city codes.
+2. **Connector** (*Facturación Electrónica > Configuración > Conectores*, group
+   *EDI Paraguay / Responsable*): one connector per company; choose the
+   provider (`provider_type`), the environment (test / production) and the
+   credentials the provider module adds to the *Credenciales* group.
+3. **Timbrado** (`account.authorization`) and **journal**: establishment,
+   expedition point and timbrado on each electronic sales journal
+   (`l10n_latam_use_documents` enabled).
+4. **Taxes**: check the SIFEN tab of each tax (`Afectación tributaria IVA`,
+   `Tasa IVA`, `Proporción gravada`). Defaults are derived from the percentage
+   (10 % / 5 % taxed, 0 % exempt); set *Exonerado* or *Gravado parcial*
+   explicitly.
+5. **Products**: NCM code and SET unit of measure code (`l10n_py_unit_code`,
+   77 = unit).
+6. **Partners**: taxpayer type, RUC or identity document, address.
 
-### Step 1: Company Configuration
+## System parameters
 
-1. Go to **Settings > General Settings > Companies**
-2. Edit your company
-3. Navigate to **Electronic Invoicing** tab:
-   - Enable **Electronic Invoicing**
-   - Configure **Environment** (Test/Production)
-   - Set **EDI Provider** (factpy/facturasend)
+| Key | Default | Meaning |
+|---|---|---|
+| `l10n_py.mt_version` | `150` | SIFEN technical manual version supported |
+| `l10n_py.transmission_hours` | `72` | Transmission deadline from issue date |
+| `l10n_py.contingency_hours` | `72` | Deadline to transmit contingency documents (not fixed by MT v150) |
+| `l10n_py.cron_batch_size` | `50` | Documents processed per cron run |
 
-### Step 2: Select EDI Provider
+## Security groups
 
-Choose and configure your provider:
-
-#### Option A: FactPy
-1. Install `l10n_py_edi_factpy` module
-2. Configure credentials in connector settings
-
-#### Option B: FacturaSend
-1. Install `l10n_py_edi_facturasend` module
-2. Configure credentials in connector settings
-
-### Step 3: Configure Products
-
-For each product/service:
-1. Go to **Products**
-2. Edit product
-3. In **Invoicing** tab:
-   - Set **NCM Code** (if applicable)
-   - Configure **GTIN** (barcode for SET)
-   - Set tax information
-
-### Step 4: Partner Configuration
-
-Ensure customers have complete fiscal data:
-1. Valid **RUC** (if taxpayer)
-2. Correct **Taxpayer Type**
-3. Complete **Address** (required for electronic invoicing)
-4. **Email** (for sending electronic documents)
-
-## Document Type Configuration
-
-### Available Document Types
-
-The module pre-configures these document types:
-- **Factura Electrónica (1)**: Standard invoice
-- **Nota de Crédito (4)**: Credit note
-- **Nota de Débito (5)**: Debit note
-- **Nota de Remisión (7)**: Delivery note
-- **Autofactura (2)**: Self-invoice
-
-### Journal Configuration
-
-1. Go to **Accounting > Configuration > Journals**
-2. For each sales journal:
-   - Enable **Electronic Invoicing**
-   - Select **Document Type**
-   - Ensure timbrado is configured
-
-## Security Groups
-
-Configure user permissions:
-1. Go to **Settings > Users & Companies > Users**
-2. Edit user
-3. In **Electronic Invoicing** section:
-   - **User**: Can create and send documents
-   - **Manager**: Can configure and cancel documents
-
-## Automatic Operations
-
-### Cron Jobs
-
-The module includes automatic jobs:
-1. **Check Document Status**: Polls provider for status updates
-2. **Retry Failed Documents**: Attempts to resend failed documents
-
-Configure in **Settings > Technical > Automation > Scheduled Actions**:
-- Adjust frequency as needed
-- Enable/disable jobs
-
-### Automatic Sending
-
-Configure automatic sending on invoice confirmation:
-1. Go to company settings
-2. In **Electronic Invoicing** tab:
-   - Enable **Auto Send on Confirm**
-   - Set **Auto Download PDF/XML**
-
-## Environment Configuration
-
-### Test Environment
-
-For testing:
-1. Set **Environment** = "Test"
-2. Use test credentials from provider
-3. Documents won't be legally valid
-
-### Production Environment
-
-For production:
-1. Set **Environment** = "Production"
-2. Use production credentials
-3. Ensure all fiscal data is accurate
-4. Test thoroughly before going live
-
-## KUDE Configuration
-
-KUDE (Código Único de Documento Electrónico) settings:
-1. QR codes are generated automatically
-2. Configure QR size in report templates if needed
-3. KUDE appears on printed invoices
-
-## Contingency Mode
-
-Configure fallback when EDI service is unavailable:
-1. Enable **Contingency Mode** in company settings
-2. Set **Contingency Reason** options
-3. Documents can be sent later when service recovers
-
-## Email Configuration
-
-For automatic email sending:
-1. Configure **Outgoing Mail Server** in Odoo
-2. Set email template in **Settings > Technical > Email Templates**
-3. Customize "Electronic Invoice" template
-
+- *EDI Paraguay / Usuario*: send, check status, cancel, inutilize.
+- *EDI Paraguay / Responsable*: configure connectors, credentials and
+  timbrados. Credentials are only visible to this group.

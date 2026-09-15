@@ -206,6 +206,12 @@ class AccountMove(models.Model):
                     auth.check_validity()
                     # Flush pending writes so the SQL query sees all data
                     self.env["account.move"].flush_model(["l10n_py_invoice_number"])
+                    # Bloquear el timbrado: dos transacciones concurrentes no
+                    # pueden obtener el mismo número (se serializan aquí).
+                    self.env.cr.execute(
+                        "SELECT id FROM account_authorization WHERE id = %s FOR UPDATE",
+                        (auth.id,),
+                    )
                     # Query next number directly to avoid ORM cache issues
                     self.env.cr.execute(
                         """

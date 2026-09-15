@@ -1699,11 +1699,11 @@ class AccountMove(models.Model):
         )
         for doc in contingency_docs:
             try:
-                doc._l10n_py_edi_send()
-                self.env.cr.commit()  # pylint: disable=invalid-commit
-            except Exception:
+                # savepoint: un fallo no arrastra a los demás documentos
+                with self.env.cr.savepoint():
+                    doc._l10n_py_edi_send()
+            except Exception:  # noqa: BLE001 - el cron no debe cortarse
                 _logger.exception("Error reenviando contingencia %s", doc.display_name)
-                self.env.cr.rollback()
 
         pending_docs = self.search(
             [("l10n_py_edi_status", "in", ["sent", "processing", "to_cancel"])],
@@ -1712,10 +1712,9 @@ class AccountMove(models.Model):
         )
         for doc in pending_docs:
             try:
-                doc.action_check_edi_status()
-                self.env.cr.commit()  # pylint: disable=invalid-commit
-            except Exception:
+                with self.env.cr.savepoint():
+                    doc.action_check_edi_status()
+            except Exception:  # noqa: BLE001 - el cron no debe cortarse
                 _logger.exception(
                     "Error verificando estado EDI de %s", doc.display_name
                 )
-                self.env.cr.rollback()
