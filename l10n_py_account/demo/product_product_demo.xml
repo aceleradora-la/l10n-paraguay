@@ -10,7 +10,6 @@
         <field name="list_price">5500000.0</field>
         <field name="standard_price">4200000.0</field>
         <field name="uom_id" ref="uom.product_uom_unit" />
-        <field name="uom_po_id" ref="uom.product_uom_unit" />
         <field
             name="taxes_id"
             search="[('type_tax_use', '=', 'sale'), ('tax_group_id.name', '=', 'IVA 10%'), ('company_id', '=', ref('base.main_company'))]"
@@ -28,7 +27,6 @@
         <field name="list_price">1100000.0</field>
         <field name="standard_price">0.0</field>
         <field name="uom_id" ref="uom.product_uom_unit" />
-        <field name="uom_po_id" ref="uom.product_uom_unit" />
         <field
             name="taxes_id"
             search="[('type_tax_use', '=', 'sale'), ('tax_group_id.name', '=', 'IVA 10%'), ('company_id', '=', ref('base.main_company'))]"
@@ -49,7 +47,6 @@
         <field name="list_price">52500.0</field>
         <field name="standard_price">35000.0</field>
         <field name="uom_id" ref="uom.product_uom_unit" />
-        <field name="uom_po_id" ref="uom.product_uom_unit" />
         <field
             name="taxes_id"
             search="[('type_tax_use', '=', 'sale'), ('tax_group_id.name', '=', 'IVA 5%'), ('company_id', '=', ref('base.main_company'))]"
@@ -68,7 +65,6 @@
         <field name="list_price">157500.0</field>
         <field name="standard_price">105000.0</field>
         <field name="uom_id" ref="uom.product_uom_unit" />
-        <field name="uom_po_id" ref="uom.product_uom_unit" />
         <field
             name="taxes_id"
             search="[('type_tax_use', '=', 'sale'), ('tax_group_id.name', '=', 'IVA 5%'), ('company_id', '=', ref('base.main_company'))]"
@@ -89,7 +85,6 @@
         <field name="list_price">120000.0</field>
         <field name="standard_price">80000.0</field>
         <field name="uom_id" ref="uom.product_uom_unit" />
-        <field name="uom_po_id" ref="uom.product_uom_unit" />
         <field
             name="taxes_id"
             search="[('type_tax_use', '=', 'sale'), ('tax_group_id.name', '=', 'Exento'), ('company_id', '=', ref('base.main_company'))]"
