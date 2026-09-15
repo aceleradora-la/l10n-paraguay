@@ -8,6 +8,7 @@
                 <sheet>
                     <group>
                         <field name="invoice_id" readonly="1" />
+                        <field name="cancel_deadline" readonly="1" />
                         <field
                             name="motive"
                             placeholder="Ingrese el motivo de cancelación..."
@@ -29,5 +30,14 @@
                 </sheet>
             </form>
         </field>
+    </record>
+
+    <record id="action_l10n_py_edi_cancel_wizard" model="ir.actions.act_window">
+        <field name="name">Cancelar documento electrónico</field>
+        <field name="res_model">l10n_py.edi.cancel.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="account.model_account_move" />
+        <field name="binding_view_types">form</field>
     </record>
 </odoo>

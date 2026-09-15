@@ -52,16 +52,12 @@ class EDILog(models.Model):
 
     # ============== PROVEDOR EDI ==============
 
-    provider = fields.Selection(
-        [
-            ("factpy", "FactPy"),
-            ("facturasend", "FacturaSend"),
-            ("sifen", "SIFEN Directo"),
-            ("local", "Processamento Local"),
-        ],
-        string="Provedor",
+    provider = fields.Char(
+        string="Proveedor",
         required=True,
         index=True,
+        help="Valor de provider_type del conector (facturasend, sifen_direct, ...) "
+        "o 'local' para procesamiento local.",
     )
 
     # ============== DADOS DA REQUISIÇÃO ==============
