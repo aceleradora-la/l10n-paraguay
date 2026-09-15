@@ -37,5 +37,11 @@ class AccountChartTemplate(models.AbstractModel):
                 "account_journal_suspense_account_id": "account_py_103",
                 "account_sale_tax_id": "py_tax_vat_10_ventas",
                 "account_purchase_tax_id": "py_tax_vat_10_compras",
+                # Odoo 19: las cuentas de ingreso/gasto por defecto viven en la
+                # compañía y de ahí se derivan las propiedades de categoría de
+                # producto (property_account_*_categ_id). Sin ellas, las líneas
+                # de factura quedan sin cuenta.
+                "income_account_id": "account_py_40101_income",
+                "expense_account_id": "account_py_50101_expense",
             },
         }
