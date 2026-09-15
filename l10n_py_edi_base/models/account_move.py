@@ -690,10 +690,9 @@ class AccountMove(models.Model):
                 }
             )
 
-        # Agregar contacto
-        if partner.phone or partner.mobile:
-            customer_data["telefono"] = partner.phone or ""
-            customer_data["celular"] = partner.mobile or ""
+        # Agregar contacto (Odoo 19 no tiene res.partner.mobile: phone unifica ambos)
+        if partner.phone:
+            customer_data["telefono"] = partner.phone
 
         if partner.email:
             customer_data["email"] = partner.email

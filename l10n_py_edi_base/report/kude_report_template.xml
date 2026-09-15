@@ -224,12 +224,12 @@
                                         />
                                     </div>
                                     <t
-                                        t-if="doc.partner_id.phone or doc.partner_id.mobile"
+                                        t-if="doc.partner_id.phone"
                                     >
                                         <div style="margin-bottom: 1px;">
                                             <strong>Tel: </strong>
                                             <span
-                                                t-out="doc.partner_id.phone or doc.partner_id.mobile"
+                                                t-out="doc.partner_id.phone"
                                             />
                                         </div>
                                     </t>
