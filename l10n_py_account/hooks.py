@@ -31,7 +31,11 @@ def post_init_hook(env):
     previous_level = chart_logger.level
     chart_logger.setLevel(logging.ERROR)
     try:
-        env["account.chart.template"].try_loading("py", company)
+        # install_demo=True: en Odoo 19 la carga del plan solo purga la
+        # contabilidad demo previa (facturas ya validadas por el demo de
+        # `account`) con este flag; sin él, marcar "Usa documentos" en los
+        # diarios falla con la constraint de l10n_latam_invoice_document.
+        env["account.chart.template"].try_loading("py", company, install_demo=True)
     finally:
         chart_logger.setLevel(previous_level)
     for fname in (
