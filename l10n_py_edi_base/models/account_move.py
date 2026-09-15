@@ -4,6 +4,7 @@ import logging
 import re
 import secrets
 import string
+from datetime import datetime, timezone
 
 from dateutil.relativedelta import relativedelta
 
@@ -79,7 +80,9 @@ class AccountMove(models.Model):
             ("sent", "Enviado"),
             ("processing", "Procesando"),
             ("accepted", "Aceptado"),
+            ("accepted_obs", "Aceptado con observación"),
             ("rejected", "Rechazado"),
+            ("to_cancel", "Cancelación en proceso"),
             ("cancelled", "Cancelado"),
             ("error", "Error"),
         ],
@@ -87,10 +90,41 @@ class AccountMove(models.Model):
         default="draft",
         readonly=True,
         copy=False,
+        index=True,
     )
 
     l10n_py_edi_message = fields.Text("Mensaje EDI", readonly=True, copy=False)
+    l10n_py_edi_errors = fields.Text(
+        "Errores EDI",
+        readonly=True,
+        copy=False,
+        help="Errores del último envío, un error por línea: código, mensaje y "
+        "origen (sifen = rechazo de la DNIT; provider = error del intermediario "
+        "o del transporte).",
+    )
     l10n_py_edi_batch_id = fields.Char("ID de Lote", readonly=True, copy=False)
+    l10n_py_edi_protocol = fields.Char(
+        "Protocolo SIFEN",
+        readonly=True,
+        copy=False,
+        help="Número de protocolo de autorización (dProtAut) devuelto por SIFEN",
+    )
+    l10n_py_edi_response_code = fields.Char(
+        "Código de respuesta", readonly=True, copy=False, help="dCodRes de SIFEN"
+    )
+    l10n_py_edi_approval_date = fields.Datetime(
+        "Fecha de aprobación",
+        readonly=True,
+        copy=False,
+        help="Fecha/hora de aprobación por SIFEN (dFecProc). Desde aquí se "
+        "cuentan los plazos de cancelación.",
+    )
+    l10n_py_edi_digest = fields.Char(
+        "DigestValue", readonly=True, copy=False, help="DigestValue de la firma"
+    )
+    l10n_py_edi_retryable = fields.Boolean(
+        "Reintentable", readonly=True, copy=False, default=False
+    )
     l10n_py_security_code = fields.Char(
         "Código de Seguridad", size=9, readonly=True, copy=False
     )
@@ -241,19 +275,61 @@ class AccountMove(models.Model):
         """Override para configurar estado EDI al confirmar factura."""
         res = super().action_post()
         for move in self:
-            if move.move_type in ("out_invoice", "out_refund"):
+            if move._l10n_py_edi_is_applicable() and move.l10n_py_edi_status in (
+                "draft",
+                False,
+            ):
                 move.l10n_py_edi_status = "to_send"
         return res
 
+    def _l10n_py_edi_is_applicable(self):
+        """¿Este asiento es un Documento Electrónico paraguayo?"""
+        self.ensure_one()
+        return (
+            self.move_type in ("out_invoice", "out_refund")
+            and self.company_id.country_id.code == "PY"
+            and self.journal_id.l10n_latam_use_documents
+        )
+
+    def _l10n_py_edi_check_not_approved(self, action):
+        for move in self:
+            if move.l10n_py_edi_status in ("accepted", "accepted_obs", "to_cancel"):
+                raise UserError(
+                    _(
+                        "El documento %(name)s fue aprobado por SIFEN (CDC "
+                        "%(cdc)s): no se puede %(action)s. Use el evento de "
+                        "cancelación.",
+                        name=move.display_name,
+                        cdc=move.l10n_py_cdc,
+                        action=action,
+                    )
+                )
+
+    def button_draft(self):
+        self._l10n_py_edi_check_not_approved(_("volver a borrador"))
+        return super().button_draft()
+
+    def button_cancel(self):
+        self._l10n_py_edi_check_not_approved(_("cancelar por el flujo estándar"))
+        return super().button_cancel()
+
+    @api.model
+    def _l10n_py_get_param(self, key, default):
+        """Parámetro de configuración con valor por defecto
+        (ver data/ir_config_parameter_data.xml)."""
+        value = self.env["ir.config_parameter"].sudo().get_param(key)
+        return value if value not in (None, "", False) else default
+
     @api.depends("invoice_date")
     def _compute_transmission_deadline(self):
-        """Calcular plazo máximo de transmisión (72h desde emisión)"""
+        """Plazo máximo de transmisión: ``l10n_py.transmission_hours`` (72 h
+        según MT v150 §6.2) desde el inicio del día de emisión."""
+        hours = int(self._l10n_py_get_param("l10n_py.transmission_hours", 72))
         for move in self:
             if move.invoice_date:
-                # 72 horas desde el inicio del día de emisión
                 move.l10n_py_transmission_deadline = fields.Datetime.from_string(
                     str(move.invoice_date) + " 00:00:00"
-                ) + relativedelta(hours=72)
+                ) + relativedelta(hours=hours)
             else:
                 move.l10n_py_transmission_deadline = False
 
@@ -298,7 +374,7 @@ class AccountMove(models.Model):
         for record in self:
             if record.l10n_py_security_code and len(record.l10n_py_security_code) != 9:
                 raise ValidationError(
-                    _("El código de seguridad debe tener " "exactamente 9 caracteres")
+                    _("El código de seguridad debe tener exactamente 9 caracteres")
                 )
 
     # ============== PRIVATE METHODS ==============
@@ -864,14 +940,28 @@ class AccountMove(models.Model):
 
         return errors
 
-    def _validate_edi_data(self):
-        """Validar datos antes de enviar a EDI"""
+    def _l10n_py_check_edi_constraints(self):
+        """Lista de errores que impiden emitir el DE (vacía si está todo bien).
+
+        Acumula todos los problemas en lugar de cortar en el primero, para que
+        el usuario los corrija de una vez.
+        """
+        self.ensure_one()
         errors = []
 
         # Validar datos de la empresa
         company = self.company_id
         if not company.l10n_py_ruc:
             errors.append(_("Configure el RUC de la empresa"))
+        if (
+            not self.env["l10n_py.edi.connector"]
+            .sudo()
+            .search_count([("company_id", "=", company.id)])
+        ):
+            errors.append(
+                _("No hay un conector EDI configurado para la empresa %s")
+                % company.name
+            )
 
         # Validar datos del cliente (F15)
         partner = self.partner_id
@@ -923,9 +1013,14 @@ class AccountMove(models.Model):
                     )
                 )
 
+        return errors
+
+    def _validate_edi_data(self):
+        """Validar datos antes de enviar a EDI: un único UserError con todos
+        los errores."""
+        errors = self._l10n_py_check_edi_constraints()
         if errors:
             raise UserError("\n".join(errors))
-
         return True
 
     # ============== PUBLIC METHODS ==============
@@ -957,6 +1052,11 @@ class AccountMove(models.Model):
         document_data = self._prepare_edi_document_data()
         connector = self._get_edi_connector()
         xml_string = connector.preview_document(document_data)
+        if not xml_string:
+            raise UserError(
+                _("El proveedor '%s' no genera el XML localmente.")
+                % connector.provider_type
+            )
 
         import base64 as b64
 
@@ -1009,71 +1109,301 @@ class AccountMove(models.Model):
         )
         return self._target_new_tab(attachment)
 
+    # ============== ENVÍO Y PROCESAMIENTO DE RESULTADOS ==============
+
     def action_send_edi(self):
-        """Enviar documento a sistema EDI"""
+        """Botón: enviar a SIFEN los documentos seleccionados."""
+        moves = self.filtered(
+            lambda m: m.l10n_py_edi_status in ("draft", "to_send", "error", "rejected")
+        )
+        if not moves:
+            raise UserError(_("No hay documentos pendientes de envío."))
+        moves._l10n_py_edi_send(raise_on_error=len(moves) == 1)
+
+    def _l10n_py_edi_send(self, raise_on_error=False):
+        """Envía uno o más DE a través del conector de cada compañía.
+
+        - Valida cada documento (todos los errores juntos).
+        - Usa ``send_documents`` (lote) cuando el proveedor lo soporta.
+        - Nunca deja un documento en ``sent`` sin resultado: cualquier
+          excepción de transporte se traduce a ``error`` (reintentable).
+
+        :return: dict ``{move: result}`` con los resultados normalizados.
+        """
+        results = {}
+        for company_moves in self.grouped("company_id").values():
+            connector = company_moves[:1]._get_edi_connector()
+            valid_moves = self.env["account.move"]
+            payloads = []
+            for move in company_moves:
+                errors = move._l10n_py_check_edi_constraints()
+                if errors:
+                    move._l10n_py_edi_apply_result(
+                        connector._make_result(
+                            "error",
+                            errors=[("", e, "provider") for e in errors],
+                            retryable=True,
+                        )
+                    )
+                    results[move] = None
+                    if raise_on_error:
+                        raise UserError("\n".join(errors))
+                    continue
+                payloads.append(move._prepare_edi_document_data())
+                valid_moves |= move
+            if not valid_moves:
+                continue
+            valid_moves.write(
+                {"l10n_py_edi_status": "sent", "l10n_py_edi_errors": False}
+            )
+            try:
+                if len(valid_moves) > 1 and connector.supports("batch"):
+                    raw_results = connector.send_documents(payloads)
+                else:
+                    raw_results = [connector.send_document(d) for d in payloads]
+            except UserError:
+                raise
+            except Exception as e:
+                _logger.exception("Error enviando DE a %s", connector.provider_type)
+                err = connector._error_result(str(e), code="", source="provider")
+                for move in valid_moves:
+                    move._l10n_py_edi_apply_result(err)
+                    results[move] = err
+                if raise_on_error:
+                    raise UserError(_("Error enviando documento: %s") % e) from e
+                continue
+            for move, raw in zip(valid_moves, raw_results, strict=True):
+                result = self._l10n_py_normalize_result(raw)
+                move._l10n_py_edi_apply_result(result)
+                results[move] = result
+                if raise_on_error and result["status"] in ("rejected", "error"):
+                    raise UserError(
+                        _("SIFEN/%(provider)s rechazó el documento:\n%(errors)s")
+                        % {
+                            "provider": connector.provider_type,
+                            "errors": move.l10n_py_edi_errors or result.get("error"),
+                        }
+                    )
+        return results
+
+    @api.model
+    def _l10n_py_normalize_result(self, raw):
+        """Completa un resultado de conector al contrato normalizado.
+
+        Acepta el formato legado ``{"success", "result", "error"}`` y deriva
+        ``status``: éxito con documentos → ``accepted``; éxito solo con
+        ``loteId`` → ``processing``; fracaso → ``rejected`` (o ``error`` si
+        el conector lo marca reintentable).
+        """
+        if not isinstance(raw, dict):
+            return self.env["l10n_py.edi.connector"]._make_result(
+                "error", errors=[("", _("Respuesta inválida del conector"), "provider")]
+            )
+        if raw.get("status") in (
+            "accepted",
+            "accepted_obs",
+            "processing",
+            "rejected",
+            "error",
+        ):
+            raw.setdefault("errors", [])
+            raw.setdefault("result", {})
+            raw["result"].setdefault("deList", [])
+            raw["result"].setdefault("loteId", None)
+            raw.setdefault("retryable", raw["status"] == "error")
+            raw.setdefault("raw", None)
+            raw.setdefault("error", None)
+            raw.setdefault(
+                "success", raw["status"] in ("accepted", "accepted_obs", "processing")
+            )
+            return raw
+        result = raw.get("result") or {}
+        de_list = result.get("deList") or []
+        if raw.get("success") and de_list:
+            status = "accepted"
+        elif raw.get("success") and result.get("loteId"):
+            status = "processing"
+        elif raw.get("retryable"):
+            status = "error"
+        else:
+            status = "rejected"
+        errors = []
+        if raw.get("error"):
+            errors.append(("", raw["error"], "provider"))
+        return self.env["l10n_py.edi.connector"]._make_result(
+            status,
+            documents=de_list,
+            batch_id=result.get("loteId"),
+            errors=errors,
+            raw=raw.get("raw", raw),
+            retryable=bool(raw.get("retryable")),
+        )
+
+    @api.model
+    def _l10n_py_format_errors(self, errors):
+        lines = []
+        for err in errors or []:
+            code = err.get("code") or ""
+            src = "SIFEN" if err.get("source") == "sifen" else _("Proveedor")
+            text = err.get("message") or ""
+            lines.append(f"[{src}] {code + ': ' if code else ''}{text}")
+        return "\n".join(lines)
+
+    def _l10n_py_edi_apply_result(self, result):
+        """Aplica un resultado normalizado al documento (estado, CDC, XML, QR...).
+
+        Es el único punto que muta el estado EDI a partir de una respuesta,
+        tanto en el envío síncrono como en el polling del cron.
+        """
         self.ensure_one()
+        status = result["status"]
+        docs = result["result"].get("deList") or []
+        de_data = docs[0] if docs else {}
+        vals = {
+            "l10n_py_edi_errors": self._l10n_py_format_errors(result.get("errors")),
+            "l10n_py_edi_retryable": bool(result.get("retryable")),
+        }
+        if result["result"].get("loteId"):
+            vals["l10n_py_edi_batch_id"] = result["result"]["loteId"]
+        if de_data.get("cdc"):
+            vals["l10n_py_cdc"] = de_data["cdc"]
+        if de_data.get("code"):
+            vals["l10n_py_edi_response_code"] = str(de_data["code"])
 
-        # Validar datos
-        self._validate_edi_data()
-
-        # Preparar datos
-        document_data = self._prepare_edi_document_data()
-
-        # Obtener conector configurado
-        connector = self._get_edi_connector()
-
-        try:
-            # Enviar documento
-            self.l10n_py_edi_status = "sent"
-            response = connector.send_document(document_data)
-
-            # Procesar respuesta
-            if response.get("success"):
-                self._process_edi_response(response)
-            else:
-                self.l10n_py_edi_status = "rejected"
-                self.l10n_py_edi_message = response.get("error", "Error desconocido")
-
-        except Exception as e:
-            _logger.error("Error enviando EDI: %s", str(e))
-            self.l10n_py_edi_status = "error"
-            self.l10n_py_edi_message = str(e)
-            raise UserError(_("Error enviando documento: %s") % str(e)) from e
-
-    def _process_edi_response(self, response):
-        """Procesar respuesta exitosa del EDI"""
-        self.ensure_one()
-
-        result = response.get("result", {})
-
-        # Guardar CDC y otros datos
-        if result.get("deList"):
-            de_data = result["deList"][0]
-            self.write(
+        if status in ("accepted", "accepted_obs"):
+            vals.update(
                 {
-                    "l10n_py_cdc": de_data.get("cdc"),
-                    "l10n_py_qr_string": de_data.get("qr"),
-                    "l10n_py_edi_status": "accepted",
-                    "l10n_py_edi_batch_id": result.get("loteId"),
-                    "l10n_py_edi_message": ("Documento aceptado exitosamente"),
+                    "l10n_py_edi_status": status,
+                    "l10n_py_edi_protocol": de_data.get("protocol")
+                    or self.l10n_py_edi_protocol,
+                    "l10n_py_edi_digest": de_data.get("digest")
+                    or self.l10n_py_edi_digest,
+                    "l10n_py_edi_approval_date": self._l10n_py_parse_datetime(
+                        de_data.get("approval_date")
+                    )
+                    or fields.Datetime.now(),
+                    "l10n_py_edi_message": de_data.get("message")
+                    or (
+                        _("Documento aceptado con observaciones")
+                        if status == "accepted_obs"
+                        else _("Documento aceptado exitosamente")
+                    ),
                 }
             )
-
-            # Generar la imagen del QR a partir del enlace dCarQR
-            self._l10n_py_generate_qr_image()
-
-            # Guardar XML si viene
+            if de_data.get("qr"):
+                vals["l10n_py_qr_string"] = de_data["qr"]
             if de_data.get("xml"):
-                import base64 as b64
+                vals.update(
+                    self._l10n_py_prepare_xml_vals(
+                        de_data["xml"], cdc=vals.get("l10n_py_cdc")
+                    )
+                )
+            self.write(vals)
+            self._l10n_py_generate_qr_image()
+            self._l10n_py_store_kude(de_data.get("pdf"))
+        elif status == "processing":
+            vals.update(
+                {
+                    "l10n_py_edi_status": "processing",
+                    "l10n_py_edi_message": de_data.get("message")
+                    or _("Enviado; esperando respuesta de SIFEN"),
+                }
+            )
+            self.write(vals)
+        elif status == "rejected":
+            vals.update(
+                {
+                    "l10n_py_edi_status": "rejected",
+                    "l10n_py_edi_message": de_data.get("message")
+                    or result.get("error")
+                    or _("Documento rechazado"),
+                }
+            )
+            self.write(vals)
+        else:  # error
+            vals.update(
+                {
+                    "l10n_py_edi_status": "error",
+                    "l10n_py_edi_message": result.get("error")
+                    or _("Error de transporte"),
+                }
+            )
+            self.write(vals)
 
-                self.l10n_py_edi_xml = b64.b64encode(de_data["xml"].encode("utf-8"))
-                self.l10n_py_edi_xml_filename = f"{self.l10n_py_cdc}.xml"
-
-            # Auto-generar KuDE al aceptar
+    @api.model
+    def _l10n_py_parse_datetime(self, value):
+        """Convierte la fecha del proveedor (ISO 8601, con o sin zona) a Datetime."""
+        if not value:
+            return False
+        if isinstance(value, datetime):
+            dt = value
+        else:
             try:
-                self._generate_kude()
+                dt = datetime.fromisoformat(
+                    str(value).replace("Z", "+00:00")
+                )
+            except ValueError:
+                return False
+        if dt.tzinfo is not None:
+            dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+        return dt
+
+    def _l10n_py_prepare_xml_vals(self, xml, cdc=None):
+        """Valores para persistir el XML firmado devuelto por el proveedor."""
+        import base64 as b64
+
+        if isinstance(xml, str):
+            xml = xml.encode("utf-8")
+        return {
+            "l10n_py_edi_xml": b64.b64encode(xml),
+            "l10n_py_edi_xml_filename": f"{cdc or self.l10n_py_cdc or self.name}.xml",
+        }
+
+    def _l10n_py_store_kude(self, pdf_bytes):
+        """Guarda el KuDE que devuelve el proveedor; si no lo hay, intenta
+        generarlo localmente (nunca bloquea la aceptación)."""
+        import base64 as b64
+
+        self.ensure_one()
+        if pdf_bytes:
+            self.write(
+                {
+                    "l10n_py_kude_pdf": b64.b64encode(pdf_bytes),
+                    "l10n_py_kude_filename": f"KUDE_{self.l10n_py_cdc}.pdf",
+                }
+            )
+            return
+        try:
+            self._generate_kude()
+        except Exception as e:
+            _logger.warning("Error generando KuDE de %s: %s", self.display_name, e)
+
+    def _process_edi_response(self, response):
+        """Compatibilidad: procesar una respuesta cruda del conector."""
+        self.ensure_one()
+        self._l10n_py_edi_apply_result(self._l10n_py_normalize_result(response))
+
+    def action_check_edi_status(self):
+        """Botón/cron: consultar el estado de documentos enviados o en proceso."""
+        for move in self.filtered(
+            lambda m: m.l10n_py_edi_status in ("sent", "processing", "to_cancel")
+        ):
+            connector = move._get_edi_connector()
+            ref = move.l10n_py_edi_batch_id or move.l10n_py_cdc
+            if not ref:
+                continue
+            try:
+                raw = connector.check_status(ref)
             except Exception as e:
-                _logger.warning("Error generando KuDE: %s", str(e))
+                _logger.warning(
+                    "Error consultando estado de %s: %s", move.display_name, e
+                )
+                continue
+            result = self._l10n_py_normalize_result(raw)
+            if move.l10n_py_edi_status == "to_cancel":
+                move._l10n_py_edi_apply_cancel_result(result)
+            elif result["status"] != "processing" or result["result"].get("deList"):
+                move._l10n_py_edi_apply_result(result)
 
     def _l10n_py_generate_qr_image(self):
         """Genera la imagen PNG del QR (l10n_py_qr_code) desde el enlace."""
@@ -1121,53 +1451,82 @@ class AccountMove(models.Model):
             },
         }
 
+    # Plazos de cancelación por tipo de DE (MT v150 §6.2.1), en horas desde
+    # la aprobación de SIFEN.
+    CANCEL_LIMIT_HOURS = {"1": 48, "4": 48, "5": 168, "6": 168, "7": 168}
+
+    def _l10n_py_cancel_deadline(self):
+        """Fecha/hora límite para el evento de cancelación, o False."""
+        self.ensure_one()
+        if not self.l10n_py_edi_approval_date:
+            return False
+        code = self.l10n_latam_document_type_id.code or "1"
+        hours = self.CANCEL_LIMIT_HOURS.get(code, 48)
+        return self.l10n_py_edi_approval_date + relativedelta(hours=hours)
+
     def _validate_cancel_deadline(self):
-        """Validar plazo de cancelación según tipo de documento SIFEN.
-
-        FE/AFE: 48 horas, NCE/NDE/NRE: 168 horas (7 días).
-        """
-        if not self.invoice_date:
-            return
-        code = (
-            self.l10n_latam_document_type_id.code
-            if self.l10n_latam_document_type_id
-            else ""
-        )
-        # FE(1) y AFE(4): 48h, NCE(5)/NDE(6)/NRE(7): 168h
-        if code in ("1", "4"):
-            max_hours = 48
-        else:
-            max_hours = 168
-
-        emission_dt = fields.Datetime.from_string(str(self.invoice_date) + " 00:00:00")
-        deadline = emission_dt + relativedelta(hours=max_hours)
-        now = fields.Datetime.now()
-        if now > deadline:
+        """Levanta UserError si el plazo de cancelación expiró."""
+        self.ensure_one()
+        deadline = self._l10n_py_cancel_deadline()
+        if deadline and fields.Datetime.now() > deadline:
             raise UserError(
                 _(
-                    "El plazo de cancelación ha expirado. "
-                    "Límite: %(deadline)s (%(hours)s horas desde emisión).",
-                    deadline=deadline,
-                    hours=max_hours,
+                    "El plazo de cancelación expiró el %(deadline)s "
+                    "(%(hours)s horas desde la aprobación).",
+                    deadline=fields.Datetime.to_string(deadline),
+                    hours=self.CANCEL_LIMIT_HOURS.get(
+                        self.l10n_latam_document_type_id.code or "1", 48
+                    ),
                 )
             )
 
-    def action_cancel_edi(self):
-        """Cancelar documento electrónico"""
+    def action_cancel_edi(self, reason=""):
+        """Evento de cancelación del DE aprobado."""
         self.ensure_one()
-
         if not self.l10n_py_cdc:
             raise UserError(_("No se puede cancelar un documento sin CDC"))
-
+        if self.l10n_py_edi_status not in ("accepted", "accepted_obs"):
+            raise UserError(
+                _("Solo se pueden cancelar documentos aprobados por SIFEN.")
+            )
         self._validate_cancel_deadline()
-
         connector = self._get_edi_connector()
-        response = connector.cancel_document(self.l10n_py_cdc)
-        if response.get("success"):
-            self.l10n_py_edi_status = "cancelled"
-            self.l10n_py_edi_message = f"Cancelado el {fields.Datetime.now()}"
+        raw = connector.cancel_document(self.l10n_py_cdc, reason)
+        result = self._l10n_py_normalize_result(raw)
+        self._l10n_py_edi_apply_cancel_result(result, raise_on_error=True)
+
+    def _l10n_py_edi_apply_cancel_result(self, result, raise_on_error=False):
+        self.ensure_one()
+        status = result["status"]
+        errors = self._l10n_py_format_errors(result.get("errors"))
+        if status in ("accepted", "accepted_obs"):
+            self.write(
+                {
+                    "l10n_py_edi_status": "cancelled",
+                    "l10n_py_edi_message": _("Cancelado el %s")
+                    % fields.Datetime.to_string(fields.Datetime.now()),
+                    "l10n_py_edi_errors": False,
+                }
+            )
+        elif status == "processing":
+            self.write(
+                {
+                    "l10n_py_edi_status": "to_cancel",
+                    "l10n_py_edi_message": _(
+                        "Cancelación enviada; esperando respuesta"
+                    ),
+                }
+            )
         else:
-            raise UserError(_("Error cancelando documento: %s") % response.get("error"))
+            # El evento fue rechazado o falló el transporte: el DE sigue aprobado.
+            if self.l10n_py_edi_status == "to_cancel":
+                self.l10n_py_edi_status = "accepted"
+            self.l10n_py_edi_errors = errors
+            if raise_on_error:
+                raise UserError(
+                    _("Error cancelando documento:\n%s")
+                    % (errors or result.get("error"))
+                )
 
     def action_retry_edi(self):
         """Reintentar envío de documento"""
@@ -1175,7 +1534,7 @@ class AccountMove(models.Model):
 
         if self.l10n_py_edi_status not in ["error", "rejected"]:
             raise UserError(
-                _("Solo se pueden reintentar documentos " "con error o rechazados")
+                _("Solo se pueden reintentar documentos con error o rechazados")
             )
 
         return self.action_send_edi()
@@ -1240,49 +1599,42 @@ class AccountMove(models.Model):
     # ============== CRON METHODS ==============
 
     @api.model
-    def _cron_check_edi_status(self):
-        """Verificar estado de documentos enviados y procesar cola de contingencia.
+    def _cron_check_edi_status(self, limit=None):
+        """Reenvía contingencias pendientes y aplica el estado de los documentos
+        enviados/en proceso (``check_status`` del conector).
 
-        Prioriza documentos cercanos al plazo de 72h.
+        Prioriza los documentos más cercanos al plazo de transmisión. El
+        tamaño de cada corrida se controla con ``l10n_py.cron_batch_size``.
         """
-        # 1. Procesar cola de contingencia (to_send pendientes)
+        limit = limit or int(self._l10n_py_get_param("l10n_py.cron_batch_size", 50))
         contingency_docs = self.search(
             [
                 ("l10n_py_edi_status", "=", "to_send"),
                 ("l10n_py_emission_type", "=", "2"),
+                ("state", "=", "posted"),
             ],
             order="l10n_py_transmission_deadline asc",
+            limit=limit,
         )
         for doc in contingency_docs:
             try:
-                doc.action_send_edi()
+                doc._l10n_py_edi_send()
+                self.env.cr.commit()  # pylint: disable=invalid-commit
             except Exception:
-                _logger.warning("Error reenviando doc contingencia %s", doc.name)
+                _logger.exception("Error reenviando contingencia %s", doc.display_name)
+                self.env.cr.rollback()
 
-        # 2. Verificar estado de documentos ya enviados
         pending_docs = self.search(
-            [
-                ("l10n_py_edi_status", "in", ["sent", "processing"]),
-                ("l10n_py_edi_batch_id", "!=", False),
-            ]
+            [("l10n_py_edi_status", "in", ["sent", "processing", "to_cancel"])],
+            order="l10n_py_transmission_deadline asc",
+            limit=limit,
         )
-
         for doc in pending_docs:
             try:
-                connector = (
-                    self.env["l10n_py.edi.connector"]
-                    .sudo()
-                    .search([("company_id", "=", doc.company_id.id)], limit=1)
+                doc.action_check_edi_status()
+                self.env.cr.commit()  # pylint: disable=invalid-commit
+            except Exception:
+                _logger.exception(
+                    "Error verificando estado EDI de %s", doc.display_name
                 )
-                if not connector:
-                    continue
-                response = connector.check_status(doc.l10n_py_edi_batch_id)
-                if response.get("success"):
-                    # Actualizar estado según respuesta
-                    pass
-            except Exception as e:
-                _logger.error(
-                    "Error verificando estado EDI para %s: %s",
-                    doc.name,
-                    str(e),
-                )
+                self.env.cr.rollback()

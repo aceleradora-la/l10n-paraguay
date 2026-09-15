@@ -33,11 +33,28 @@
                             <field
                                 name="l10n_py_edi_status"
                                 widget="statusbar"
-                                statusbar_visible="draft,to_send,sent,processing,accepted"
+                                statusbar_visible="draft,to_send,sent,processing,accepted,accepted_obs"
                             />
                             <field name="l10n_py_edi_message" widget="text" />
+                            <field
+                                name="l10n_py_edi_errors"
+                                widget="text"
+                                invisible="not l10n_py_edi_errors"
+                            />
                             <field name="l10n_py_cdc" readonly="1" />
+                            <field name="l10n_py_edi_protocol" readonly="1" />
+                            <field name="l10n_py_edi_approval_date" readonly="1" />
                             <field name="l10n_py_edi_batch_id" readonly="1" />
+                            <field
+                                name="l10n_py_edi_response_code"
+                                readonly="1"
+                                groups="base.group_no_one"
+                            />
+                            <field
+                                name="l10n_py_edi_digest"
+                                readonly="1"
+                                groups="base.group_no_one"
+                            />
                         </group>
                     </group>
                     <field name="l10n_py_doc_type_code" invisible="1" />
@@ -88,26 +105,26 @@
                     name="action_preview_xml"
                     string="Preview XML"
                     type="object"
-                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'processing']"
+                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'accepted_obs', 'processing', 'to_cancel', 'cancelled']"
                 />
                 <button
                     name="action_preview_kude"
                     string="Preview KuDE"
                     type="object"
-                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'processing']"
+                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'accepted_obs', 'processing', 'to_cancel', 'cancelled']"
                 />
                 <button
                     name="action_l10n_py_preview_qr"
                     string="Previsualizar QR"
                     type="object"
-                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'processing']"
+                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'accepted_obs', 'processing', 'to_cancel', 'cancelled']"
                 />
                 <button
                     name="action_send_edi"
                     string="Enviar a EDI"
                     type="object"
                     class="oe_highlight"
-                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'processing']"
+                    invisible="l10n_py_edi_status in ['sent', 'accepted', 'accepted_obs', 'processing', 'to_cancel', 'cancelled']"
                 />
                 <button
                     name="action_retry_edi"
@@ -116,10 +133,16 @@
                     invisible="l10n_py_edi_status not in ['error', 'rejected']"
                 />
                 <button
-                    name="action_cancel_edi"
-                    string="Cancelar EDI"
+                    name="action_check_edi_status"
+                    string="Consultar estado"
                     type="object"
-                    invisible="not l10n_py_cdc"
+                    invisible="l10n_py_edi_status not in ['sent', 'processing', 'to_cancel']"
+                />
+                <button
+                    name="%(l10n_py_edi_base.action_l10n_py_edi_cancel_wizard)d"
+                    string="Cancelar EDI"
+                    type="action"
+                    invisible="l10n_py_edi_status not in ['accepted', 'accepted_obs']"
                 />
                 <button
                     name="action_download_xml"
