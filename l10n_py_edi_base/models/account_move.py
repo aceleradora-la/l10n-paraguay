@@ -720,7 +720,7 @@ class AccountMove(models.Model):
             payment_condition["credito"] = {
                 "tipo": 1,  # 1: Plazo, 2: Cuotas
                 "plazo": (
-                    f"{self.invoice_payment_term_id.line_ids[0].days} días"
+                    f"{self.invoice_payment_term_id.line_ids[0].nb_days} días"
                     if self.invoice_payment_term_id.line_ids
                     else "0 días"
                 ),
@@ -731,7 +731,7 @@ class AccountMove(models.Model):
             cuotas = []
             if self.invoice_date and self.invoice_payment_term_id.line_ids:
                 for line in self.invoice_payment_term_id.line_ids:
-                    due_date = self.invoice_date + relativedelta(days=line.days)
+                    due_date = self.invoice_date + relativedelta(days=line.nb_days)
                     cuotas.append(
                         {
                             "moneda": self.currency_id.name,
@@ -1392,7 +1392,21 @@ class AccountMove(models.Model):
                     or _("Enviado; esperando respuesta de SIFEN"),
                 }
             )
+            # Conectores directos: el XML firmado y el QR ya son definitivos
+            # aunque SIFEN todavía no haya respondido.
+            if de_data.get("qr"):
+                vals["l10n_py_qr_string"] = de_data["qr"]
+            if de_data.get("xml") and not self.l10n_py_edi_xml:
+                vals.update(
+                    self._l10n_py_prepare_xml_vals(
+                        de_data["xml"], cdc=vals.get("l10n_py_cdc")
+                    )
+                )
             self.write(vals)
+            if de_data.get("qr"):
+                self._l10n_py_generate_qr_image()
+                self.invalidate_recordset(["l10n_py_edi_xml_attachment_id"])
+                self._l10n_py_sync_attachment_names()
         elif status == "rejected":
             vals.update(
                 {
@@ -1480,11 +1494,48 @@ class AccountMove(models.Model):
                     "Error consultando estado de %s: %s", move.display_name, e
                 )
                 continue
-            result = self._l10n_py_normalize_result(raw)
+            result = move._l10n_py_select_document_result(
+                self._l10n_py_normalize_result(raw)
+            )
             if move.l10n_py_edi_status == "to_cancel":
                 move._l10n_py_edi_apply_cancel_result(result)
             elif result["status"] != "processing" or result["result"].get("deList"):
                 move._l10n_py_edi_apply_result(result)
+
+    def _l10n_py_select_document_result(self, result):
+        """Reduce el resultado de un lote al documento de este asiento.
+
+        Los conectores con lote devuelven en ``deList`` un elemento por DE,
+        cada uno con su propio ``status``; se conserva solo el que coincide
+        con el CDC del asiento y su estado pasa a ser el del resultado. Si no
+        hay coincidencia (lote aún en proceso) se devuelve tal cual.
+        """
+        self.ensure_one()
+        docs = result.get("result", {}).get("deList") or []
+        if len(docs) <= 1 or not self.l10n_py_cdc:
+            return result
+        match = [d for d in docs if d.get("cdc") == self.l10n_py_cdc]
+        if not match:
+            return result
+        doc = match[0]
+        status = doc.get("status") or result["status"]
+        errors = [
+            e
+            for e in result.get("errors") or []
+            if not e.get("message", "").startswith("[")
+            or e["message"].startswith(f"[{self.l10n_py_cdc}]")
+        ]
+        selected = dict(result, status=status, errors=errors)
+        selected["result"] = dict(result["result"], deList=[doc])
+        selected["success"] = status in ("accepted", "accepted_obs", "processing")
+        selected["error"] = (
+            "; ".join(
+                f"{e['code']}: {e['message']}" if e.get("code") else e["message"]
+                for e in errors
+            )
+            or None
+        )
+        return selected
 
     def _l10n_py_generate_qr_image(self):
         """Genera la imagen PNG del QR (l10n_py_qr_code) desde el enlace."""
