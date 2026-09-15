@@ -69,9 +69,21 @@ class AccountMove(models.Model):
     l10n_py_qr_code = fields.Binary("Código QR", readonly=True, copy=False)
     l10n_py_qr_string = fields.Char("String QR", readonly=True, copy=False)
     l10n_py_edi_xml = fields.Binary("XML Firmado", readonly=True, copy=False)
-    l10n_py_edi_xml_filename = fields.Char("XML Filename", readonly=True)
+    l10n_py_edi_xml_filename = fields.Char("XML Filename", readonly=True, copy=False)
     l10n_py_kude_pdf = fields.Binary("KUDE (PDF)", readonly=True, copy=False)
-    l10n_py_kude_filename = fields.Char("KUDE Filename", readonly=True)
+    l10n_py_kude_filename = fields.Char("KUDE Filename", readonly=True, copy=False)
+    # Registros ir.attachment que respaldan los Binary (res_field): son los
+    # que se adjuntan al correo y los que se resguardan como comprobante.
+    l10n_py_edi_xml_attachment_id = fields.Many2one(
+        "ir.attachment",
+        string="Adjunto XML",
+        compute="_compute_l10n_py_edi_attachments",
+    )
+    l10n_py_kude_attachment_id = fields.Many2one(
+        "ir.attachment",
+        string="Adjunto KuDE",
+        compute="_compute_l10n_py_edi_attachments",
+    )
 
     l10n_py_edi_status = fields.Selection(
         [
@@ -332,6 +344,75 @@ class AccountMove(models.Model):
                 ) + relativedelta(hours=hours)
             else:
                 move.l10n_py_transmission_deadline = False
+
+    @api.depends("l10n_py_edi_xml", "l10n_py_kude_pdf")
+    def _compute_l10n_py_edi_attachments(self):
+        Attachment = self.env["ir.attachment"].sudo()
+        for move in self:
+            move.l10n_py_edi_xml_attachment_id = False
+            move.l10n_py_kude_attachment_id = False
+            if not move.id:
+                continue
+            attachments = Attachment.search(
+                [
+                    ("res_model", "=", "account.move"),
+                    ("res_id", "=", move.id),
+                    ("res_field", "in", ("l10n_py_edi_xml", "l10n_py_kude_pdf")),
+                ]
+            )
+            for att in attachments:
+                if att.res_field == "l10n_py_edi_xml":
+                    move.l10n_py_edi_xml_attachment_id = att
+                else:
+                    move.l10n_py_kude_attachment_id = att
+
+    def _l10n_py_get_edi_attachments(self):
+        """Adjuntos fiscales del DE (XML firmado y KuDE) con nombre y mimetype
+        correctos, para el correo y las descargas."""
+        self.ensure_one()
+        self._l10n_py_sync_attachment_names()
+        return self.l10n_py_edi_xml_attachment_id | self.l10n_py_kude_attachment_id
+
+    def _l10n_py_sync_attachment_names(self):
+        """Los Binary con res_field se crean sin nombre útil: se alinean con
+        los campos *_filename y el mimetype."""
+        for move in self:
+            for att, name, mimetype in (
+                (
+                    move.l10n_py_edi_xml_attachment_id,
+                    move.l10n_py_edi_xml_filename,
+                    "application/xml",
+                ),
+                (
+                    move.l10n_py_kude_attachment_id,
+                    move.l10n_py_kude_filename,
+                    "application/pdf",
+                ),
+            ):
+                if att and name and (att.name != name or att.mimetype != mimetype):
+                    att.sudo().write({"name": name, "mimetype": mimetype})
+
+    def write(self, vals):
+        # Un XML aprobado por SIFEN es un comprobante: no se reemplaza.
+        if vals.get("l10n_py_edi_xml") and not self.env.context.get(
+            "l10n_py_edi_replace_xml"
+        ):
+            for move in self:
+                if (
+                    move.l10n_py_edi_status in ("accepted", "accepted_obs", "cancelled")
+                    and move.l10n_py_edi_xml
+                    and move.l10n_py_edi_xml != vals["l10n_py_edi_xml"]
+                    and vals.get("l10n_py_edi_status")
+                    not in ("accepted", "accepted_obs")
+                ):
+                    raise UserError(
+                        _(
+                            "El XML de %s ya fue aprobado por SIFEN y no puede "
+                            "reemplazarse."
+                        )
+                        % move.display_name
+                    )
+        return super().write(vals)
 
     @api.depends("l10n_latam_document_type_id")
     def _compute_l10n_py_doc_type_code(self):
@@ -1301,6 +1382,10 @@ class AccountMove(models.Model):
             self.write(vals)
             self._l10n_py_generate_qr_image()
             self._l10n_py_store_kude(de_data.get("pdf"))
+            self.invalidate_recordset(
+                ["l10n_py_edi_xml_attachment_id", "l10n_py_kude_attachment_id"]
+            )
+            self._l10n_py_sync_attachment_names()
         elif status == "processing":
             vals.update(
                 {
@@ -1339,9 +1424,7 @@ class AccountMove(models.Model):
             dt = value
         else:
             try:
-                dt = datetime.fromisoformat(
-                    str(value).replace("Z", "+00:00")
-                )
+                dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
             except ValueError:
                 return False
         if dt.tzinfo is not None:
