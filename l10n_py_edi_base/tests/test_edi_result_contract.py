@@ -211,3 +211,19 @@ class TestEdiResultContract(L10nPyEdiCommon):
         ) + timedelta(hours=24)
         self.assertEqual(move.l10n_py_transmission_deadline, expected)
         self.assertEqual(self.Move._l10n_py_get_param("l10n_py.mt_version", "0"), "150")
+
+    def test_attachments_exposed_and_immutable(self):
+        move = self._create_invoice()
+        with mock.patch.object(type(move), "_generate_kude", return_value=None):
+            move._l10n_py_edi_apply_result(self._accepted())
+        att = move.l10n_py_edi_xml_attachment_id
+        self.assertTrue(att)
+        self.assertEqual(att.res_field, "l10n_py_edi_xml")
+        self.assertEqual(att.name, f"{move.l10n_py_cdc}.xml")
+        self.assertEqual(att.mimetype, "application/xml")
+        self.assertEqual(move._l10n_py_get_edi_attachments(), att)
+        with self.assertRaisesRegex(UserError, "no puede reemplazarse"):
+            move.write({"l10n_py_edi_xml": b"b3RoZXI="})
+        # una nueva aprobación (p. ej. polling que trae el XML definitivo) sí puede
+        move._l10n_py_edi_apply_result(self._accepted(xml="<rDE>final</rDE>"))
+        self.assertEqual(move.l10n_py_edi_status, "accepted")
