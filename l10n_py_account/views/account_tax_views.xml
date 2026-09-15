@@ -6,7 +6,11 @@
         <field name="inherit_id" ref="account.view_tax_form" />
         <field name="arch" type="xml">
             <xpath expr="//page[@name='advanced_options']" position="before">
-                <page string="SIFEN (Paraguay)" name="l10n_py_sifen" invisible="country_code != 'PY'">
+                <page
+                    string="SIFEN (Paraguay)"
+                    name="l10n_py_sifen"
+                    invisible="country_code != 'PY'"
+                >
                     <group>
                         <field name="l10n_py_iva_affectation" />
                         <field name="l10n_py_iva_rate" />

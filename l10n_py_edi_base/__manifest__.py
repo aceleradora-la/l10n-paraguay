@@ -14,8 +14,8 @@
     ],
     "data": [
         # Security
-        "security/ir.model.access.csv",
         "security/l10n_py_edi_security.xml",
+        "security/ir.model.access.csv",
         # Data
         "data/l10n_py_edi_document_types.xml",
         "data/ir_config_parameter_data.xml",
