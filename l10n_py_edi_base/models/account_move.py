@@ -588,7 +588,10 @@ class AccountMove(models.Model):
 
         # Totales SIFEN
         document_data["totales"] = {
-            "totalExento": self.l10n_py_amount_exempt,  # F003
+            "totalExento": self.l10n_py_amount_exempt,  # F002
+            "totalExonerado": self.l10n_py_amount_exonerated,  # F003
+            "totalDescuento": self.l10n_py_amount_discount,  # dTotDesc
+            "redondeo": self.l10n_py_amount_rounding,  # dRedon
             "totalGravado5": self.l10n_py_amount_subtotal_5,  # F004
             "totalGravado10": self.l10n_py_amount_subtotal_10,  # F005
             "totalOperacion": self.l10n_py_total_operation,  # F008
@@ -761,23 +764,13 @@ class AccountMove(models.Model):
         for line in self.invoice_line_ids.filtered(
             lambda line: line.display_type not in ("line_section", "line_note")
         ):
-            # Determinar tasa de IVA
-            iva_rate = 10  # Por defecto 10%
-            iva_type = 1  # Gravado IVA
-
-            for tax in line.tax_ids:
-                if tax.amount == 5:
-                    iva_rate = 5
-                elif tax.amount == 0:
-                    iva_type = 3  # Exenta
-                    iva_rate = 0
-
-            # Calcular base gravable e liquidação IVA por linha (SIFEN)
-            base_gravada = 0.0
-            liquidacion_iva = 0.0
-            if iva_rate > 0 and line.price_total:
-                base_gravada = line.price_total / (1 + iva_rate / 100)
-                liquidacion_iva = line.price_total - base_gravada
+            # Afectación y tasa desde account.tax (E731/E734), importes E7/E8
+            amounts = self._l10n_py_line_amounts(line)
+            iva_rate = amounts["rate"]
+            iva_type = int(amounts["affectation"])
+            base_gravada = amounts["base"]
+            liquidacion_iva = amounts["iva"]
+            unit_discount = line.price_unit * (line.discount or 0.0) / 100.0
 
             item = {
                 "codigo": (
@@ -802,15 +795,20 @@ class AccountMove(models.Model):
                     else ""
                 )
                 or "",
-                "unidadMedida": 77,  # UNI - Unidad
+                "unidadMedida": int(
+                    getattr(line.product_id, "l10n_py_unit_code", 0) or 77
+                ),  # 77 = UNI
                 "cantidad": line.quantity,
                 "precioUnitario": line.price_unit,
+                "descuento": self._l10n_py_round(unit_discount),  # dDescItem
+                "porcentajeDescuento": line.discount or 0.0,  # dPorcDesIt
                 "cambio": 0,
                 "ivaTipo": iva_type,
-                "ivaBase": 100,
+                "ivaBase": amounts["proportion"],  # dPropIVA
                 "iva": iva_rate,
-                "baseGravada": round(base_gravada, 2),
-                "liquidacionIva": round(liquidacion_iva, 2),
+                "baseGravada": self._l10n_py_round(base_gravada),  # dBasGravIVA
+                "liquidacionIva": self._l10n_py_round(liquidacion_iva),  # dLiqIVAItem
+                "baseExenta": self._l10n_py_round(amounts["exempt_base"]),  # dBasExe
                 "lote": "",
                 "vencimiento": "",
             }
