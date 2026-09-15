@@ -81,11 +81,36 @@ class AccountMove(models.Model):
     )
 
     l10n_py_amount_exempt = fields.Monetary(
-        string="Total Exento (F003)",
+        string="Total Exento (F002)",
         compute="_compute_l10n_py_iva",
         store=True,
         currency_field="currency_id",
-        help="Subtotal exento/no gravado (SIFEN F003)",
+        help="Subtotal exento/no gravado (SIFEN F002 dSubExe)",
+    )
+
+    l10n_py_amount_exonerated = fields.Monetary(
+        string="Total Exonerado (F003)",
+        compute="_compute_l10n_py_iva",
+        store=True,
+        currency_field="currency_id",
+        help="Subtotal exonerado, Art. 83 Ley 125/91 (SIFEN F003 dSubExo)",
+    )
+
+    l10n_py_amount_discount = fields.Monetary(
+        string="Total Descuento (F033)",
+        compute="_compute_l10n_py_iva",
+        store=True,
+        currency_field="currency_id",
+        help="Suma de descuentos por ítem (SIFEN dTotDesc)",
+    )
+
+    l10n_py_amount_rounding = fields.Monetary(
+        string="Redondeo (F034)",
+        compute="_compute_l10n_py_iva",
+        store=True,
+        currency_field="currency_id",
+        help="Diferencia por redondeo de la moneda (SIFEN dRedon). En guaraníes "
+        "todos los importes son enteros, por lo que normalmente es 0.",
     )
 
     l10n_py_amount_iva_total = fields.Monetary(
@@ -219,60 +244,114 @@ class AccountMove(models.Model):
                 auth = move.l10n_py_authorization_id
                 number_str = str(move.l10n_py_invoice_number).zfill(7)
                 move.l10n_py_full_invoice_number = (
-                    f"{auth.establishment}-" f"{auth.expedition_point}-" f"{number_str}"
+                    f"{auth.establishment}-{auth.expedition_point}-{number_str}"
                 )
             else:
                 move.l10n_py_full_invoice_number = False
 
+    def _l10n_py_round(self, amount):
+        """Único punto de redondeo de importes SIFEN: la precisión de la moneda
+        del documento (guaraníes sin decimales; 2 decimales en el resto)."""
+        self.ensure_one()
+        currency = self.currency_id or self.company_id.currency_id
+        return currency.round(amount) if currency else round(amount, 2)
+
+    def _l10n_py_line_iva_params(self, line):
+        """``(tasa, afectación, proporción)`` de una línea a partir de sus
+        impuestos (ver ``account.tax._l10n_py_get_iva_params``)."""
+        return line.tax_ids._l10n_py_get_iva_params()
+
+    def _l10n_py_line_amounts(self, line):
+        """Importes SIFEN de una línea (grupo E7/E8), sin redondear.
+
+        Devuelve dict con ``total`` (dTotOpeItem: precio con IVA por cantidad,
+        neto de descuento), ``discount`` (descuento total de la línea),
+        ``base`` (dBasGravIVA), ``iva`` (dLiqIVAItem), ``exempt_base``
+        (dBasExe), ``rate``, ``affectation``, ``proportion``.
+        """
+        rate, affectation, proportion = self._l10n_py_line_iva_params(line)
+        total = line.price_total
+        discount = line.quantity * line.price_unit * (line.discount or 0.0) / 100.0
+        if affectation in ("1", "4") and rate:
+            base = (total * proportion / 100.0) / (1 + rate / 100.0)
+            iva = base * rate / 100.0
+            exempt_base = (
+                (total * (100.0 - proportion) / 100.0) if affectation == "4" else 0.0
+            )
+        else:
+            base = iva = 0.0
+            exempt_base = total
+        return {
+            "total": total,
+            "discount": discount,
+            "base": base,
+            "iva": iva,
+            "exempt_base": exempt_base,
+            "rate": rate,
+            "affectation": affectation,
+            "proportion": proportion,
+        }
+
     @api.depends(
         "invoice_line_ids.price_subtotal",
         "invoice_line_ids.price_total",
+        "invoice_line_ids.discount",
         "invoice_line_ids.tax_ids",
+        "invoice_line_ids.tax_ids.l10n_py_iva_affectation",
+        "invoice_line_ids.tax_ids.l10n_py_iva_rate",
+        "invoice_line_ids.tax_ids.l10n_py_taxable_proportion",
+        "currency_id",
     )
     def _compute_l10n_py_iva(self):
-        """Calcular desglose de IVA según fórmula SIFEN v150.
+        """Desglose de IVA según SIFEN (grupo F) a partir de la afectación de
+        cada impuesto, nunca del porcentaje del importe calculado.
 
-        Fórmula SIFEN: base = price_total / (1 + tasa/100)
-                        iva  = price_total - base
+        base = (total * proporción/100) / (1 + tasa/100); iva = base * tasa/100.
         """
         for move in self:
             subtotal_10 = iva_10 = base_10 = 0.0
             subtotal_5 = iva_5 = base_5 = 0.0
-            exempt = 0.0
+            exempt = exonerated = discount = 0.0
 
             for line in move.invoice_line_ids.filtered(
                 lambda line: line.display_type == "product"
             ):
-                tax_rate = 0
-                for tax in line.tax_ids:
-                    if tax.amount == 10:
-                        tax_rate = 10
-                    elif tax.amount == 5:
-                        tax_rate = 5
-
-                if tax_rate == 10:
-                    base = line.price_total / 1.1
-                    subtotal_10 += line.price_total  # F005
-                    iva_10 += line.price_total - base  # F016
-                    base_10 += base  # F019
-                elif tax_rate == 5:
-                    base = line.price_total / 1.05
-                    subtotal_5 += line.price_total  # F004
-                    iva_5 += line.price_total - base  # F015
-                    base_5 += base  # F018
+                amounts = move._l10n_py_line_amounts(line)
+                discount += amounts["discount"]
+                if amounts["affectation"] in ("1", "4") and amounts["rate"] == 10:
+                    subtotal_10 += amounts["total"]  # F005
+                    iva_10 += amounts["iva"]  # F016
+                    base_10 += amounts["base"]  # F019
+                    exempt += amounts["exempt_base"]
+                elif amounts["affectation"] in ("1", "4") and amounts["rate"] == 5:
+                    subtotal_5 += amounts["total"]  # F004
+                    iva_5 += amounts["iva"]  # F015
+                    base_5 += amounts["base"]  # F018
+                    exempt += amounts["exempt_base"]
+                elif amounts["affectation"] == "2":
+                    exonerated += amounts["total"]  # F003
                 else:
-                    exempt += line.price_subtotal  # F003
+                    exempt += amounts["total"]  # F002
 
-            move.l10n_py_amount_subtotal_10 = subtotal_10
-            move.l10n_py_amount_iva_10 = iva_10
-            move.l10n_py_base_10 = base_10
-            move.l10n_py_amount_subtotal_5 = subtotal_5
-            move.l10n_py_amount_iva_5 = iva_5
-            move.l10n_py_base_5 = base_5
-            move.l10n_py_amount_exempt = exempt
-            move.l10n_py_amount_iva_total = iva_10 + iva_5  # F014
-            move.l10n_py_base_total = base_10 + base_5  # F020
-            move.l10n_py_total_operation = exempt + subtotal_5 + subtotal_10  # F008
+            r = move._l10n_py_round
+            move.l10n_py_amount_subtotal_10 = r(subtotal_10)
+            move.l10n_py_amount_iva_10 = r(iva_10)
+            move.l10n_py_base_10 = r(base_10)
+            move.l10n_py_amount_subtotal_5 = r(subtotal_5)
+            move.l10n_py_amount_iva_5 = r(iva_5)
+            move.l10n_py_base_5 = r(base_5)
+            move.l10n_py_amount_exempt = r(exempt)
+            move.l10n_py_amount_exonerated = r(exonerated)
+            move.l10n_py_amount_discount = r(discount)
+            move.l10n_py_amount_iva_total = r(iva_10 + iva_5)  # F014
+            move.l10n_py_base_total = r(base_10 + base_5)  # F020
+            total_operation = r(exempt + exonerated + subtotal_5 + subtotal_10)  # F008
+            move.l10n_py_total_operation = total_operation
+            # dRedon: diferencia entre el total a pagar de Odoo y el total de
+            # operación SIFEN (0 en guaraníes, donde todo es entero).
+            move.l10n_py_amount_rounding = r(
+                (move.amount_total or 0.0) - total_operation
+            )
 
     @api.depends("amount_total", "l10n_py_exchange_rate")
     def _compute_l10n_py_total_pyg(self):
