@@ -5,6 +5,8 @@
             <t t-foreach="docs" t-as="doc">
                 <div
                     class="article"
+                    t-att-data-oe-model="doc._name"
+                    t-att-data-oe-id="doc.id"
                     style="font-family: Arial, sans-serif; font-size: 11px; line-height: 1.3; color: #000;"
                 >
                     <div class="page">
