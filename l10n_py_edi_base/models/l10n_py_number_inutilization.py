@@ -136,6 +136,21 @@ class NumberInutilization(models.Model):
 
     # ============== ACTIONS ==============
 
+    def _prepare_inutilization_data(self):
+        """Datos del evento de inutilización (Grupo GeVeInu) para el conector."""
+        self.ensure_one()
+        auth = self.authorization_id
+        doc_type_code = auth.l10n_latam_document_type_id.code or "1"
+        return {
+            "timbrado": auth.name or "",
+            "establecimiento": auth.establishment or "001",
+            "punto": auth.expedition_point or "001",
+            "numeroDesde": str(self.number_from).zfill(7),
+            "numeroHasta": str(self.number_to).zfill(7),
+            "tipoDocumento": int(doc_type_code),
+            "motivo": self.motive or "",
+        }
+
     def action_send(self):
         """Enviar inutilización al SIFEN a través del conector EDI."""
         self.ensure_one()
@@ -152,16 +167,7 @@ class NumberInutilization(models.Model):
         if not connector:
             raise UserError(_("No hay un conector EDI configurado para esta empresa."))
 
-        auth = self.authorization_id
-        data = {
-            "timbrado": auth.name or "",
-            "establecimiento": auth.l10n_py_establishment or "001",
-            "punto": auth.l10n_py_point or "001",
-            "numeroDesde": str(self.number_from).zfill(7),
-            "numeroHasta": str(self.number_to).zfill(7),
-            "tipoDocumento": 1,  # FE por defecto
-            "motivo": self.motive or "",
-        }
+        data = self._prepare_inutilization_data()
 
         try:
             response = connector.inutilize_range(data)

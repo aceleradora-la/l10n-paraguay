@@ -168,6 +168,28 @@ class TestEDILifecycle(TransactionCase):
         self.assertEqual(inut.quantity, 10)
         self.assertEqual(inut.state, "draft")
 
+    def test_inutilization_data_uses_authorization_fields(self):
+        """F11: los datos del evento salen de establishment/expedition_point del timbrado."""
+        inut = self.env["l10n_py.number.inutilization"].create(
+            {
+                "authorization_id": self.authorization.id,
+                "number_from": 9990,
+                "number_to": 9999,
+                "motive": "Números saltados por error de sistema",
+            }
+        )
+        data = inut._prepare_inutilization_data()
+        self.assertEqual(data["timbrado"], self.authorization.name)
+        self.assertEqual(data["establecimiento"], self.authorization.establishment)
+        self.assertEqual(data["punto"], self.authorization.expedition_point)
+        self.assertEqual(
+            data["tipoDocumento"],
+            int(self.authorization.l10n_latam_document_type_id.code or "1"),
+        )
+        self.assertEqual(data["numeroDesde"], "0009990")
+        self.assertEqual(data["numeroHasta"], "0009999")
+        self.assertEqual(data["motivo"], "Números saltados por error de sistema")
+
     def test_inutilize_over_1000(self):
         """F11: Inutilizar más de 1000 → error"""
         with self.assertRaises(ValidationError):
