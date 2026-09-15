@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo noupdate="1">
+    <!-- Versión del Manual Técnico SIFEN soportada por el builder -->
+    <record id="param_mt_version" model="ir.config_parameter">
+        <field name="key">l10n_py.mt_version</field>
+        <field name="value">150</field>
+    </record>
+    <!-- Plazo de transmisión desde la emisión (MT v150 §6.2) -->
+    <record id="param_transmission_hours" model="ir.config_parameter">
+        <field name="key">l10n_py.transmission_hours</field>
+        <field name="value">72</field>
+    </record>
+    <!-- Plazo para transmitir documentos emitidos en contingencia. El MT v150
+         lo deja como "futuro": configurable, sin valor normativo confirmado. -->
+    <record id="param_contingency_hours" model="ir.config_parameter">
+        <field name="key">l10n_py.contingency_hours</field>
+        <field name="value">72</field>
+    </record>
+    <!-- Documentos procesados por corrida del cron de estado -->
+    <record id="param_cron_batch_size" model="ir.config_parameter">
+        <field name="key">l10n_py.cron_batch_size</field>
+        <field name="value">50</field>
+    </record>
+</odoo>

@@ -46,7 +46,11 @@
                             <field name="timeout" />
                             <field name="active" />
                         </group>
-                        <group name="credentials" string="Credenciales">
+                        <group
+                            name="credentials"
+                            string="Credenciales"
+                            groups="l10n_py_edi_base.group_edi_manager"
+                        >
                             <!-- Extended by provider modules via xpath -->
                         </group>
                     </group>
@@ -69,5 +73,6 @@
         parent="menu_edi_connectors"
         action="action_edi_connector"
         sequence="10"
+        groups="l10n_py_edi_base.group_edi_manager"
     />
 </odoo>
