@@ -37,4 +37,9 @@
         <field name="model_id" ref="model_l10n_py_number_inutilization" />
         <field name="domain_force">[('company_id', 'in', company_ids)]</field>
     </record>
+    <record id="rule_edi_event_company" model="ir.rule">
+        <field name="name">Eventos SIFEN: multi-compañía</field>
+        <field name="model_id" ref="model_l10n_py_edi_event" />
+        <field name="domain_force">[('company_id', 'in', company_ids)]</field>
+    </record>
 </odoo>

@@ -148,6 +148,20 @@
                     invisible="l10n_py_edi_status not in ['accepted', 'accepted_obs']"
                 />
                 <button
+                    name="%(l10n_py_edi_base.action_l10n_py_edi_event_wizard)d"
+                    string="Evento SIFEN"
+                    type="action"
+                    groups="l10n_py_edi_base.group_edi_user"
+                    invisible="not l10n_py_cdc or l10n_py_edi_status in ['draft', 'to_send', 'sent', 'processing', 'error', 'rejected', 'cancelled']"
+                />
+                <button
+                    name="%(l10n_py_edi_base.action_l10n_py_edi_contingency_wizard)d"
+                    string="Emitir en contingencia"
+                    type="action"
+                    groups="l10n_py_edi_base.group_edi_user"
+                    invisible="l10n_py_emission_type != '1' or l10n_py_edi_status not in ['to_send', 'error', 'rejected']"
+                />
+                <button
                     name="action_download_xml"
                     string="Descargar XML"
                     type="object"

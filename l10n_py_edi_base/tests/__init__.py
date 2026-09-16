@@ -9,3 +9,4 @@ from . import test_edi_result_contract
 from . import test_edi_validation
 from . import test_kude_generation
 from . import test_qr_generator
+from . import test_edi_events

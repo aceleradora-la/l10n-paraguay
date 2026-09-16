@@ -29,6 +29,11 @@ class ResCompany(models.Model):
         help="RUC con dígito verificador",
     )
 
+    l10n_py_edi_auto_contingency = fields.Boolean(
+        string="Contingencia automática",
+        help="Si SIFEN no responde (error de transporte reintentable), los documentos "
+        "pasan solos a emisión en contingencia y se transmiten después por el cron.",
+    )
     l10n_py_trade_name = fields.Char(
         string="Nombre Fantasía",
         help="Nombre comercial o de fantasía de la empresa",
