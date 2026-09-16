@@ -230,6 +230,146 @@ class EDIConnector(models.Model):
             % self.provider_type
         )
 
+    # === Helper HTTP para proveedores REST ===
+
+    def _l10n_py_rest_request(
+        self,
+        method,
+        url,
+        operation_type,
+        error_prefix,
+        *,
+        json=None,
+        data=None,
+        files=None,
+        headers=None,
+        params=None,
+        expect_json=True,
+        cdc=None,
+        timeout=None,
+    ):
+        """Llamada HTTP con registro en ``l10n_py.edi.log``.
+
+        Devuelve ``(status_code, body)``: ``body`` es el JSON decodificado
+        (``dict``/``list``) o los bytes crudos si ``expect_json`` es falso o
+        la respuesta no es JSON. Los errores de red se levantan como
+        ``UserError`` con código ``<error_prefix>-TIMEOUT`` / ``-CONN`` para
+        que el conector los convierta en resultado ``error`` reintentable.
+        """
+        import json as json_lib
+        import time
+
+        import requests  # import perezoso: dependencia de los conectores REST
+
+        self.ensure_one()
+        started = time.monotonic()
+        request_data = json if json is not None else data
+        try:
+            response = requests.request(
+                method,
+                url,
+                json=json,
+                data=data,
+                files=files,
+                params=params or None,
+                headers=headers or None,
+                timeout=timeout or self.timeout or 30,
+            )
+        except requests.exceptions.Timeout as e:
+            self._l10n_py_rest_log(
+                operation_type,
+                url,
+                method,
+                request_data,
+                None,
+                False,
+                f"{error_prefix}-TIMEOUT",
+                started,
+                cdc=cdc,
+            )
+            raise UserError(
+                _("%s-TIMEOUT: el proveedor no respondió a tiempo") % error_prefix
+            ) from e
+        except requests.exceptions.RequestException as e:
+            self._l10n_py_rest_log(
+                operation_type,
+                url,
+                method,
+                request_data,
+                None,
+                False,
+                f"{error_prefix}-CONN: {e}",
+                started,
+                cdc=cdc,
+            )
+            raise UserError(
+                _("%(prefix)s-CONN: no se pudo conectar con el proveedor: %(err)s")
+                % {"prefix": error_prefix, "err": e}
+            ) from e
+        body = response.content
+        if expect_json:
+            try:
+                body = response.json()
+            except ValueError:
+                body = {
+                    "_raw": response.text[:1000],
+                    "_error": _("Respuesta no JSON (HTTP %s)") % response.status_code,
+                }
+        ok = response.status_code < 400
+        error = None
+        if not ok:
+            error = (
+                json_lib.dumps(body, ensure_ascii=False)[:500]
+                if isinstance(body, dict | list)
+                else response.text[:500]
+            )
+        self._l10n_py_rest_log(
+            operation_type,
+            url,
+            method,
+            request_data,
+            body if expect_json else f"<{len(response.content)} bytes>",
+            ok,
+            error,
+            started,
+            status_code=response.status_code,
+            cdc=cdc,
+        )
+        return response.status_code, body
+
+    def _l10n_py_rest_log(
+        self,
+        operation_type,
+        url,
+        method,
+        request,
+        response,
+        ok,
+        error,
+        started,
+        status_code=0,
+        cdc=None,
+    ):
+        import json as json_lib
+        import time
+
+        safe_request = request
+        if isinstance(request, dict | list):
+            safe_request = json_lib.loads(json_lib.dumps(request, default=str))
+        self.env["l10n_py.edi.log"].sudo().log_operation(
+            operation_type=operation_type,
+            provider=self.provider_type or "local",
+            request_data=safe_request,
+            response_data=response,
+            execution_time=(time.monotonic() - started) * 1000,
+            success=ok,
+            error_message=error,
+            endpoint=url,
+            method=method,
+            status_code=status_code,
+            cdc=cdc,
+        )
+
     def _notify(self, title, message, notif_type="success"):
         """Acción de notificación para ``test_connection`` y similares."""
         return {
