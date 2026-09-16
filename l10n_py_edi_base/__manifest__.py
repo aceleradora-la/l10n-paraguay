@@ -1,6 +1,6 @@
 {
     "name": "Paraguay - Electronic Invoicing Base",
-    "version": "19.0.2.1.0",
+    "version": "19.0.2.2.0",
     "category": "Accounting/Localizations/EDI",
     "summary": "Base module for Electronic Invoicing in Paraguay",
     "author": "KMEE, Odoo Community Association (OCA)",

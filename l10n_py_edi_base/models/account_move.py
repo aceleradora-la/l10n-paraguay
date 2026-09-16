@@ -1308,6 +1308,28 @@ class AccountMove(models.Model):
                     )
         return results
 
+    def _l10n_py_external_number_vals(self, number):
+        """Proveedores que asignan la numeración (Sifende): alinea el número
+        del documento con el que quedó en el CDC. Devuelve vals para write."""
+        self.ensure_one()
+        digits = "".join(filter(str.isdigit, str(number)))[-7:]
+        if not digits:
+            return {}
+        new_number = int(digits)
+        if new_number == (self.l10n_py_invoice_number or 0):
+            return {}
+        vals = {"l10n_py_invoice_number": new_number}
+        old = str(self.l10n_py_invoice_number or "").zfill(7)
+        if self.name and self.l10n_py_invoice_number and old in self.name:
+            vals["name"] = self.name.replace(old, digits.zfill(7))
+        self.message_post(
+            body=_(
+                "Numeración asignada por el proveedor: %(new)s (Odoo tenía %(old)s)."
+            )
+            % {"new": digits.zfill(7), "old": old}
+        )
+        return vals
+
     @api.model
     def _l10n_py_commit_if_possible(self):
         """Commit fuera de los tests (mismo criterio que
@@ -1401,6 +1423,8 @@ class AccountMove(models.Model):
             vals["l10n_py_cdc"] = de_data["cdc"]
         if de_data.get("code"):
             vals["l10n_py_edi_response_code"] = str(de_data["code"])
+        if de_data.get("number"):
+            vals.update(self._l10n_py_external_number_vals(de_data["number"]))
 
         if status in ("accepted", "accepted_obs"):
             vals.update(
