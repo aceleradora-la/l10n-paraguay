@@ -14,6 +14,8 @@ class TestKudeGeneration(TransactionCase):
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
+        # estos tests cubren el motor pykude (el motor por defecto es qweb)
+        cls.env["ir.config_parameter"].sudo().set_param("l10n_py.kude_engine", "pykude")
         cls.company = cls.env.ref("base.main_company")
         cls.country_py = cls.env.ref("base.py")
         cls.company.write(

@@ -1,0 +1,143 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_l10n_py_edi_event_tree" model="ir.ui.view">
+        <field name="name">l10n_py.edi.event.list</field>
+        <field name="model">l10n_py.edi.event</field>
+        <field name="arch" type="xml">
+            <list>
+                <field name="sent_date" />
+                <field name="event_type" />
+                <field name="move_id" />
+                <field name="cdc" />
+                <field name="protocol" />
+                <field name="response_code" />
+                <field name="user_id" />
+                <field
+                    name="state"
+                    widget="badge"
+                    decoration-success="state == 'accepted'"
+                    decoration-danger="state in ('rejected', 'error')"
+                    decoration-info="state == 'sent'"
+                />
+            </list>
+        </field>
+    </record>
+
+    <record id="view_l10n_py_edi_event_form" model="ir.ui.view">
+        <field name="name">l10n_py.edi.event.form</field>
+        <field name="model">l10n_py.edi.event</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_send"
+                        string="Enviar"
+                        type="object"
+                        class="oe_highlight"
+                        invisible="state not in ('draft', 'error', 'rejected')"
+                        groups="l10n_py_edi_base.group_edi_user"
+                    />
+                    <field name="state" widget="statusbar" />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="event_type" readonly="state != 'draft'" />
+                            <field name="move_id" readonly="state != 'draft'" />
+                            <field name="cdc" readonly="state != 'draft'" />
+                            <field
+                                name="company_id"
+                                groups="base.group_multi_company"
+                            />
+                            <field
+                                name="partner_id"
+                                invisible="event_type != 'nomination'"
+                                readonly="state != 'draft'"
+                            />
+                            <field
+                                name="conformity_type"
+                                invisible="event_type != 'receipt_conformity'"
+                                readonly="state != 'draft'"
+                            />
+                            <field
+                                name="issue_date"
+                                invisible="event_type not in ('receipt_notification', 'receipt_unknown')"
+                                readonly="state != 'draft'"
+                            />
+                            <field
+                                name="receipt_date"
+                                invisible="event_type not in ('receipt_notification', 'receipt_conformity', 'receipt_unknown')"
+                                readonly="state != 'draft'"
+                            />
+                            <field
+                                name="total_pyg"
+                                invisible="event_type != 'receipt_notification'"
+                                readonly="state != 'draft'"
+                            />
+                        </group>
+                        <group>
+                            <field name="sent_date" />
+                            <field name="user_id" />
+                            <field name="event_number" />
+                            <field name="protocol" />
+                            <field name="response_code" />
+                            <field name="response_message" />
+                        </group>
+                    </group>
+                    <group>
+                        <field name="reason" readonly="state != 'draft'" />
+                        <field name="errors" invisible="not errors" />
+                    </group>
+                </sheet>
+                <chatter />
+            </form>
+        </field>
+    </record>
+
+    <record id="view_l10n_py_edi_event_search" model="ir.ui.view">
+        <field name="name">l10n_py.edi.event.search</field>
+        <field name="model">l10n_py.edi.event</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="cdc" />
+                <field name="move_id" />
+                <filter
+                    name="accepted"
+                    string="Aprobados"
+                    domain="[('state', '=', 'accepted')]"
+                />
+                <filter
+                    name="failed"
+                    string="Rechazados / error"
+                    domain="[('state', 'in', ('rejected', 'error'))]"
+                />
+                <group expand="0" string="Agrupar por">
+                    <filter
+                        name="group_type"
+                        string="Tipo"
+                        context="{'group_by': 'event_type'}"
+                    />
+                    <filter
+                        name="group_state"
+                        string="Estado"
+                        context="{'group_by': 'state'}"
+                    />
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_l10n_py_edi_event" model="ir.actions.act_window">
+        <field name="name">Eventos SIFEN</field>
+        <field name="res_model">l10n_py.edi.event</field>
+        <field name="view_mode">list,form</field>
+    </record>
+
+    <menuitem
+        id="menu_l10n_py_edi_events"
+        name="Eventos SIFEN"
+        parent="menu_l10n_py_edi_root"
+        action="action_l10n_py_edi_event"
+        sequence="15"
+    />
+</odoo>
