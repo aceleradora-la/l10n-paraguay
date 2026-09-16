@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<odoo>
+    <record id="view_l10n_py_edi_event_wizard" model="ir.ui.view">
+        <field name="name">l10n_py.edi.event.wizard.form</field>
+        <field name="model">l10n_py.edi.event.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <group>
+                        <field name="move_id" readonly="1" />
+                        <field name="is_receiver" invisible="1" />
+                        <field name="event_type" />
+                        <field
+                            name="partner_id"
+                            invisible="event_type != 'nomination'"
+                            required="event_type == 'nomination'"
+                        />
+                        <field
+                            name="conformity_type"
+                            invisible="event_type != 'receipt_conformity'"
+                        />
+                        <field
+                            name="issue_date"
+                            invisible="event_type not in ('receipt_notification', 'receipt_unknown')"
+                        />
+                        <field
+                            name="receipt_date"
+                            invisible="event_type not in ('receipt_notification', 'receipt_conformity', 'receipt_unknown')"
+                        />
+                        <field
+                            name="total_pyg"
+                            invisible="event_type != 'receipt_notification'"
+                        />
+                        <field
+                            name="reason"
+                            invisible="event_type not in ('nomination', 'receipt_disconformity', 'receipt_unknown')"
+                            required="event_type in ('nomination', 'receipt_disconformity', 'receipt_unknown')"
+                            placeholder="Motivo del evento (mínimo 5 caracteres)"
+                        />
+                    </group>
+                    <footer>
+                        <button
+                            string="Enviar evento"
+                            name="action_send"
+                            type="object"
+                            class="oe_highlight"
+                        />
+                        <button
+                            string="Cerrar"
+                            class="btn-secondary"
+                            special="cancel"
+                        />
+                    </footer>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_l10n_py_edi_event_wizard" model="ir.actions.act_window">
+        <field name="name">Enviar evento SIFEN</field>
+        <field name="res_model">l10n_py.edi.event.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="account.model_account_move" />
+        <field name="binding_view_types">form</field>
+    </record>
+
+    <record id="view_l10n_py_edi_contingency_wizard" model="ir.ui.view">
+        <field name="name">l10n_py.edi.contingency.wizard.form</field>
+        <field name="model">l10n_py.edi.contingency.wizard</field>
+        <field name="arch" type="xml">
+            <form>
+                <sheet>
+                    <p>
+                        Los documentos pasan a emisión en contingencia (iTipEmi = 2):
+                        se regenera el CDC y se transmiten cuando SIFEN vuelva a
+                        estar disponible, dentro del plazo configurado.
+                    </p>
+                    <group>
+                        <field name="move_ids" widget="many2many_tags" readonly="1" />
+                        <field name="motive" />
+                    </group>
+                    <footer>
+                        <button
+                            string="Emitir en contingencia"
+                            name="action_confirm"
+                            type="object"
+                            class="oe_highlight"
+                        />
+                        <button
+                            string="Cerrar"
+                            class="btn-secondary"
+                            special="cancel"
+                        />
+                    </footer>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="action_l10n_py_edi_contingency_wizard" model="ir.actions.act_window">
+        <field name="name">Emitir en contingencia</field>
+        <field name="res_model">l10n_py.edi.contingency.wizard</field>
+        <field name="view_mode">form</field>
+        <field name="target">new</field>
+        <field name="binding_model_id" ref="account.model_account_move" />
+        <field name="binding_view_types">form,list</field>
+    </record>
+</odoo>

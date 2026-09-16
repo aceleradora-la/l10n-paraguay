@@ -16,6 +16,11 @@
         <field name="key">l10n_py.contingency_hours</field>
         <field name="value">72</field>
     </record>
+    <!-- Motor del KuDE: qweb (reporte de este módulo) o pykude (librería externa) -->
+    <record id="param_kude_engine" model="ir.config_parameter">
+        <field name="key">l10n_py.kude_engine</field>
+        <field name="value">qweb</field>
+    </record>
     <!-- Documentos procesados por corrida del cron de estado -->
     <record id="param_cron_batch_size" model="ir.config_parameter">
         <field name="key">l10n_py.cron_batch_size</field>

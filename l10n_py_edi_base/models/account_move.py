@@ -639,14 +639,17 @@ class AccountMove(models.Model):
                     {
                         "constanciaTipo": int(ad.constancia_type),
                         "constanciaNumero": ad.constancia_number,
+                        "constanciaControl": self.l10n_py_afe_constancia_control or "",
                     }
                 )
             docs.append(doc_data)
         return docs
 
-    def _prepare_customer_data(self):
-        """Preparar datos del cliente (Grupo D receptor)"""
-        partner = self.partner_id
+    def _prepare_customer_data(self, partner=None):
+        """Preparar datos del cliente (Grupo D receptor).
+
+        ``partner`` permite armar los datos de otro receptor (nominación)."""
+        partner = partner or self.partner_id
 
         # iNatRec: 1=Contribuyente, 2=No Contribuyente
         nat_rec = partner.l10n_py_taxpayer_type or "1"
@@ -1154,28 +1157,64 @@ class AccountMove(models.Model):
         )
         return self._target_new_tab(attachment)
 
-    def action_preview_kude(self):
-        """Generar KuDE (PDF) a partir del XML preview via pykude."""
+    def _l10n_py_kude_engine(self):
+        """``qweb`` (reporte de este módulo, por defecto) o ``pykude``
+        (librería externa que dibuja el KuDE desde el XML firmado)."""
+        return self._l10n_py_get_param("l10n_py.kude_engine", "qweb")
+
+    def _l10n_py_render_kude_pykude(self):
+        """Bytes del PDF generado por ``pykude`` desde el XML firmado."""
         import base64
 
         self.ensure_one()
-        if not self.l10n_py_edi_xml:
-            # Generate XML first
-            self.action_preview_xml()
+        try:
+            from pykude import auto_kude
+            from pykude.kude_fe.config import KudeFeConfig
+        except ImportError as e:
+            raise UserError(
+                _(
+                    "El motor de KuDE 'pykude' no está instalado. Instale la "
+                    "librería o use el motor 'qweb' (parámetro l10n_py.kude_engine)."
+                )
+            ) from e
         if not self.l10n_py_edi_xml:
             raise UserError(_("No hay XML disponible para generar el KuDE"))
-
-        from pykude import auto_kude
-        from pykude.kude_fe.config import KudeFeConfig
-
         xml_content = base64.b64decode(self.l10n_py_edi_xml).decode("utf-8")
-
         config = KudeFeConfig()
         if self.company_id.logo:
             config.logo = base64.b64decode(self.company_id.logo)
+        return auto_kude(xml=xml_content, config=config).output()
 
-        kude = auto_kude(xml=xml_content, config=config)
-        pdf_bytes = kude.output()
+    def _l10n_py_render_kude_qweb(self):
+        """Bytes del PDF del reporte QWeb ``action_kude_report`` (en modo test
+        Odoo devuelve el HTML)."""
+        self.ensure_one()
+        content, _type = self.env["ir.actions.report"]._render_qweb_pdf(
+            "l10n_py_edi_base.action_kude_report", res_ids=self.ids
+        )
+        return content
+
+    def _l10n_py_render_kude(self):
+        if self._l10n_py_kude_engine() == "pykude":
+            return self._l10n_py_render_kude_pykude()
+        return self._l10n_py_render_kude_qweb()
+
+    def action_preview_kude(self):
+        """KuDE de previsualización: el reporte QWeb directo, o el PDF de
+        pykude a partir del XML preview."""
+        import base64
+
+        self.ensure_one()
+        if self._l10n_py_kude_engine() != "pykude":
+            return (
+                self.env.ref("l10n_py_edi_base.action_kude_report")
+                .with_context(discard_logo_check=True)
+                .report_action(self, config=False)
+            )
+        if not self.l10n_py_edi_xml:
+            # Generate XML first
+            self.action_preview_xml()
+        pdf_bytes = self._l10n_py_render_kude_pykude()
 
         attachment = self.env["ir.attachment"].create(
             {
@@ -1247,6 +1286,7 @@ class AccountMove(models.Model):
                 err = connector._error_result(str(e), code="", source="provider")
                 for move in valid_moves:
                     move._l10n_py_edi_apply_result(err)
+                    move._l10n_py_maybe_auto_contingency(connector)
                     results[move] = err
                 if raise_on_error:
                     raise UserError(_("Error enviando documento: %s") % e) from e
@@ -1254,8 +1294,12 @@ class AccountMove(models.Model):
             for move, raw in zip(valid_moves, raw_results, strict=True):
                 result = self._l10n_py_normalize_result(raw)
                 move._l10n_py_edi_apply_result(result)
+                move._l10n_py_maybe_auto_contingency(connector)
                 results[move] = result
                 if raise_on_error and result["status"] in ("rejected", "error"):
+                    # el estado y los errores deben sobrevivir al rollback del
+                    # UserError que ve el usuario
+                    self._l10n_py_commit_if_possible()
                     raise UserError(
                         _("SIFEN/%(provider)s rechazó el documento:\n%(errors)s")
                         % {
@@ -1264,6 +1308,16 @@ class AccountMove(models.Model):
                         }
                     )
         return results
+
+    @api.model
+    def _l10n_py_commit_if_possible(self):
+        """Commit fuera de los tests (mismo criterio que
+        ``account.move.send._can_commit``)."""
+        from odoo import modules, tools
+
+        if not tools.config["test_enable"] and not modules.module.current_test:
+            # el rechazo debe persistir aunque el usuario vea un UserError
+            self.env.cr.commit()  # pylint: disable=invalid-commit
 
     @api.model
     def _l10n_py_normalize_result(self, raw):
@@ -1622,10 +1676,98 @@ class AccountMove(models.Model):
                 _("Solo se pueden cancelar documentos aprobados por SIFEN.")
             )
         self._validate_cancel_deadline()
-        connector = self._get_edi_connector()
-        raw = connector.cancel_document(self.l10n_py_cdc, reason)
-        result = self._l10n_py_normalize_result(raw)
-        self._l10n_py_edi_apply_cancel_result(result, raise_on_error=True)
+        self._get_edi_connector()
+        event = self.env["l10n_py.edi.event"].create(
+            {
+                "move_id": self.id,
+                "company_id": self.company_id.id,
+                "cdc": self.l10n_py_cdc,
+                "event_type": "cancel",
+                "reason": reason or _("Cancelación"),
+            }
+        )
+        event.action_send()
+        if event.state in ("rejected", "error"):
+            raise UserError(
+                _("Error cancelando documento:\n%s")
+                % (event.errors or event.response_message)
+            )
+        return event
+
+    def _l10n_py_on_event_result(self, event, result):
+        """Aplica al documento el resultado de un evento (``l10n_py.edi.event``)."""
+        self.ensure_one()
+        if event.event_type == "cancel":
+            self._l10n_py_edi_apply_cancel_result(result)
+            return
+        if event.state != "accepted":
+            return
+        if event.event_type == "nomination":
+            self.message_post(
+                body=_(
+                    "Receptor nominado ante SIFEN: %(partner)s "
+                    "(protocolo %(protocol)s)."
+                )
+                % {
+                    "partner": event.partner_id.display_name,
+                    "protocol": event.protocol or "-",
+                }
+            )
+        else:
+            self.message_post(
+                body=_(
+                    "Evento '%(event)s' aprobado por SIFEN (protocolo %(protocol)s)."
+                )
+                % {
+                    "event": dict(event._fields["event_type"].selection)[
+                        event.event_type
+                    ],
+                    "protocol": event.protocol or "-",
+                }
+            )
+
+    # ============== CONTINGENCIA ==============
+
+    def _l10n_py_switch_to_contingency(self, motive):
+        """Pasa documentos no aprobados a emisión en contingencia (iTipEmi=2):
+        el CDC cambia (dígito 34), por eso se regenera al transmitir."""
+        for move in self:
+            if move.l10n_py_edi_status not in ("draft", "to_send", "error", "rejected"):
+                raise UserError(
+                    _("%s ya fue transmitido: no puede pasar a contingencia.")
+                    % move.display_name
+                )
+            move.write(
+                {
+                    "l10n_py_emission_type": "2",
+                    "l10n_py_contingency_motive": motive,
+                    "l10n_py_edi_status": "to_send"
+                    if move.state == "posted"
+                    else "draft",
+                    "l10n_py_cdc": False,
+                    "l10n_py_qr_string": False,
+                    "l10n_py_qr_code": False,
+                    "l10n_py_edi_errors": False,
+                    "l10n_py_edi_message": _("Emisión en contingencia: %s") % motive,
+                }
+            )
+            move.message_post(body=_("Documento pasado a contingencia: %s") % motive)
+        return True
+
+    def _l10n_py_maybe_auto_contingency(self, connector):
+        """Tras un error de transporte, pasa a contingencia si la compañía lo
+        tiene activado y el proveedor lo soporta."""
+        for move in self:
+            if (
+                move.company_id.l10n_py_edi_auto_contingency
+                and move.l10n_py_edi_status == "error"
+                and move.l10n_py_edi_retryable
+                and move.l10n_py_emission_type == "1"
+                and connector.supports("contingency")
+            ):
+                move._l10n_py_switch_to_contingency(
+                    _("SIFEN no disponible: %s") % (move.l10n_py_edi_message or "")
+                )
 
     def _l10n_py_edi_apply_cancel_result(self, result, raise_on_error=False):
         self.ensure_one()
@@ -1708,23 +1850,16 @@ class AccountMove(models.Model):
         }
 
     def _generate_kude(self):
-        """Generar KUDE (representación gráfica del DE) vía pykude."""
+        """Generar y guardar el KuDE (representación gráfica del DE) con el
+        motor configurado (``l10n_py.kude_engine``)."""
         import base64
 
         self.ensure_one()
-        if not self.l10n_py_edi_xml:
+        if self._l10n_py_kude_engine() == "pykude" and not self.l10n_py_edi_xml:
             return
-        from pykude import auto_kude
-        from pykude.kude_fe.config import KudeFeConfig
-
-        xml_content = base64.b64decode(self.l10n_py_edi_xml).decode("utf-8")
-
-        config = KudeFeConfig()
-        if self.company_id.logo:
-            config.logo = base64.b64decode(self.company_id.logo)
-
-        kude = auto_kude(xml=xml_content, config=config)
-        pdf_bytes = kude.output()
+        if not self.l10n_py_cdc:
+            return
+        pdf_bytes = self._l10n_py_render_kude()
         self.l10n_py_kude_pdf = base64.b64encode(pdf_bytes)
         self.l10n_py_kude_filename = f"KUDE_{self.l10n_py_cdc}.pdf"
 
@@ -1753,7 +1888,7 @@ class AccountMove(models.Model):
                 # savepoint: un fallo no arrastra a los demás documentos
                 with self.env.cr.savepoint():
                     doc._l10n_py_edi_send()
-            except Exception:  # noqa: BLE001 - el cron no debe cortarse
+            except Exception:
                 _logger.exception("Error reenviando contingencia %s", doc.display_name)
 
         pending_docs = self.search(
@@ -1765,7 +1900,7 @@ class AccountMove(models.Model):
             try:
                 with self.env.cr.savepoint():
                     doc.action_check_edi_status()
-            except Exception:  # noqa: BLE001 - el cron no debe cortarse
+            except Exception:
                 _logger.exception(
                     "Error verificando estado EDI de %s", doc.display_name
                 )
