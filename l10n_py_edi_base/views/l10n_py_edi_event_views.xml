@@ -111,18 +111,17 @@
                     string="Rechazados / error"
                     domain="[('state', 'in', ('rejected', 'error'))]"
                 />
-                <group expand="0" string="Agrupar por">
-                    <filter
-                        name="group_type"
-                        string="Tipo"
-                        context="{'group_by': 'event_type'}"
-                    />
-                    <filter
-                        name="group_state"
-                        string="Estado"
-                        context="{'group_by': 'state'}"
-                    />
-                </group>
+                <separator />
+                <filter
+                    name="group_type"
+                    string="Tipo"
+                    context="{'group_by': 'event_type'}"
+                />
+                <filter
+                    name="group_state"
+                    string="Estado"
+                    context="{'group_by': 'state'}"
+                />
             </search>
         </field>
     </record>
