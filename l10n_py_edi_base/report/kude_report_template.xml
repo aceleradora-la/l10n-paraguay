@@ -185,6 +185,9 @@
                                                 >Pasaporte: </t>
                                                 <t
                                                     t-elif="doc.partner_id.l10n_py_doc_type == '3'"
+                                                >CI extranjera: </t>
+                                                <t
+                                                    t-elif="doc.partner_id.l10n_py_doc_type == '4'"
                                                 >Carnet Res.: </t>
                                                 <t t-else="">Doc: </t>
                                             </strong>

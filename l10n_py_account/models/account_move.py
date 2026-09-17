@@ -181,8 +181,10 @@ class AccountMove(models.Model):
 
     # ============== ACTION METHODS ==============
 
-    def action_post(self):
-        """Override para asignar numeración secuencial al confirmar"""
+    def _post(self, soft=True):
+        """Numeración secuencial al confirmar. Se engancha en ``_post`` (no en
+        ``action_post``) para cubrir también las facturas generadas por código,
+        p. ej. las del Punto de Venta."""
         for move in self:
             if (
                 move.move_type in ("out_invoice", "out_refund")
@@ -235,7 +237,7 @@ class AccountMove(models.Model):
                         )
                     auth.check_number_available(next_num, exclude_move_id=move.id)
                     move.l10n_py_invoice_number = next_num
-        return super().action_post()
+        return super()._post(soft=soft)
 
     # ============== COMPUTE METHODS ==============
 

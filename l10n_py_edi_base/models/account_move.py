@@ -283,9 +283,10 @@ class AccountMove(models.Model):
 
     # ============== LIFECYCLE METHODS ==============
 
-    def action_post(self):
-        """Override para configurar estado EDI al confirmar factura."""
-        res = super().action_post()
+    def _post(self, soft=True):
+        """Estado EDI al confirmar. En ``_post`` para cubrir facturas generadas
+        por código (POS, suscripciones), no solo el botón Confirmar."""
+        res = super()._post(soft=soft)
         for move in self:
             if move._l10n_py_edi_is_applicable() and move.l10n_py_edi_status in (
                 "draft",
@@ -1048,7 +1049,11 @@ class AccountMove(models.Model):
         partner = self.partner_id
         if partner.l10n_py_taxpayer_type == "1" and not partner.l10n_py_ruc:
             errors.append(_("El cliente contribuyente debe tener RUC"))
-        if partner.l10n_py_taxpayer_type == "2" and not partner.l10n_py_doc_number:
+        if (
+            partner.l10n_py_taxpayer_type == "2"
+            and not partner.l10n_py_doc_number
+            and partner.l10n_py_doc_type != "5"  # 5 = innominado (dNumIDRec = 0)
+        ):
             errors.append(
                 _(
                     "El cliente no contribuyente debe tener número "
