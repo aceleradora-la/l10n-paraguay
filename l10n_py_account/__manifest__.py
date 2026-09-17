@@ -1,6 +1,6 @@
 {
     "name": "Paraguay - Accounting Extensions",
-    "version": "18.0.2.0.0",
+    "version": "18.0.2.1.0",
     "category": "Accounting/Localizations",
     "summary": "Accounting extensions for Paraguay localization",
     "author": "KMEE, Odoo Community Association (OCA)",

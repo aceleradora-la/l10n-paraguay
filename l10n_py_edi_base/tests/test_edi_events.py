@@ -6,6 +6,7 @@ import base64
 import io
 from unittest import mock
 
+from odoo import fields
 from odoo.exceptions import UserError
 from odoo.tests import tagged
 
@@ -107,7 +108,7 @@ class TestEdiEvents(L10nPyEdiCommon):
             {
                 "l10n_py_edi_status": "accepted",
                 "l10n_py_cdc": CDC,
-                "l10n_py_edi_approval_date": "2026-09-15 10:00:00",
+                "l10n_py_edi_approval_date": fields.Datetime.now(),
             }
         )
         return move
