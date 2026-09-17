@@ -23,6 +23,17 @@ def post_init_hook(env):
     if not module.demo:
         return
     company = env.ref("base.main_company")
+    if env["account.move"].search_count(
+        [("company_id", "=", company.id), ("state", "=", "posted")]
+    ):
+        # Otro módulo con demo (p. ej. point_of_sale) ya generó asientos
+        # conciliados en la empresa principal: recargar el plan de cuentas
+        # fallaría al borrarlos. Se omite la demo contable paraguaya.
+        _logger.info(
+            "l10n_py_account: la empresa principal ya tiene asientos; "
+            "no se recarga el plan de cuentas ni se cargan facturas demo"
+        )
+        return
     # En post_init el registro aún no está "ready", por lo que try_loading emite
     # un WARNING ("Incorrect usage of try_loading without a fully loaded
     # registry"); la carga funciona igualmente. Silenciamos ese logger solo
