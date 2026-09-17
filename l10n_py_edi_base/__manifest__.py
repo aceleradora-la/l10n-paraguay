@@ -48,15 +48,10 @@
             "cryptography",
         ],
     },
-    "demo": [
-        "demo/res_company_edi_demo.xml",
-        "demo/account_move_nce_demo.xml",
-        "demo/account_move_nde_demo.xml",
-        "demo/account_move_nre_demo.xml",
-        "demo/account_move_afe_demo.xml",
-        "demo/l10n_py_associated_document_demo.xml",
-        "demo/l10n_py_number_inutilization_demo.xml",
-    ],
+    # los datos demo se cargan en post_init_hook (dependen de las facturas
+    # demo de l10n_py_account, que pueden no existir): ver hooks.py
+    "demo": [],
+    "post_init_hook": "post_init_hook",
     "installable": True,
     "application": False,
     "auto_install": False,
