@@ -33,6 +33,17 @@ def post_init_hook(env):
             "l10n_py_account: la empresa principal ya tiene asientos; "
             "no se recarga el plan de cuentas ni se cargan facturas demo"
         )
+        # los productos demo no dependen del plan (impuestos por búsqueda) y
+        # otros módulos (l10n_py_edi_base) los referencian en su demo
+        convert_file(
+            env,
+            "l10n_py_account",
+            "demo/product_product_demo.xml",
+            {},
+            mode="init",
+            noupdate=True,
+            kind="demo",
+        )
         return
     # En post_init el registro aún no está "ready", por lo que try_loading emite
     # un WARNING ("Incorrect usage of try_loading without a fully loaded
