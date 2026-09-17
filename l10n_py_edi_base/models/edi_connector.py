@@ -2,7 +2,7 @@
 
 import logging
 
-from odoo import _, fields, models
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 _logger = logging.getLogger(__name__)
@@ -264,6 +264,22 @@ class EDIConnector(models.Model):
         self.ensure_one()
         started = time.monotonic()
         request_data = json if json is not None else data
+        replayed = self._l10n_py_replay_fixture(operation_type)
+        if replayed is not None:
+            status_code, body = replayed["status_code"], replayed["body"]
+            self._l10n_py_rest_log(
+                operation_type,
+                url,
+                method,
+                request_data,
+                body,
+                status_code < 400,
+                None if status_code < 400 else "replay",
+                started,
+                status_code=status_code,
+                cdc=cdc,
+            )
+            return status_code, body
         try:
             response = requests.request(
                 method,
@@ -335,7 +351,131 @@ class EDIConnector(models.Model):
             status_code=response.status_code,
             cdc=cdc,
         )
+        self._l10n_py_record_fixture(
+            operation_type,
+            {
+                "method": method,
+                "url": url,
+                "headers": headers,
+                "json": json,
+                "data": data,
+                "params": params,
+            },
+            response.status_code,
+            body,
+        )
         return response.status_code, body
+
+    # === Grabación y reproducción de respuestas (homologación) ===
+
+    _L10N_PY_SECRET_KEYS = (
+        "authorization",
+        "api_key",
+        "apikey",
+        "token",
+        "password",
+        "recordid",
+        "csc",
+        "secret",
+    )
+
+    @api.model
+    def _l10n_py_fixture_dirs(self):
+        """``(record_dir, replay_dir)`` de ``ir.config_parameter``
+        ``l10n_py.edi.record_dir`` / ``l10n_py.edi.replay_dir``."""
+        icp = self.env["ir.config_parameter"].sudo()
+        return (
+            icp.get_param("l10n_py.edi.record_dir") or None,
+            icp.get_param("l10n_py.edi.replay_dir") or None,
+        )
+
+    @classmethod
+    def _l10n_py_redact(cls, value):
+        """Copia de ``value`` con credenciales reemplazadas por ``***``."""
+        if isinstance(value, dict):
+            return {
+                k: (
+                    "***"
+                    if str(k).lower() in cls._L10N_PY_SECRET_KEYS
+                    else cls._l10n_py_redact(v)
+                )
+                for k, v in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._l10n_py_redact(v) for v in value]
+        if isinstance(value, bytes):
+            try:
+                return value.decode("utf-8")
+            except UnicodeDecodeError:
+                return f"<{len(value)} bytes>"
+        return value
+
+    def _l10n_py_fixture_path(self, base_dir, operation_type):
+        import os
+
+        return os.path.join(base_dir, self.provider_type or "local", operation_type)
+
+    def _l10n_py_record_fixture(self, operation_type, request, status_code, body):
+        """Guarda request/response (redactados) como JSON numerado en
+        ``<record_dir>/<proveedor>/<operación>/``. Solo si el parámetro
+        ``l10n_py.edi.record_dir`` está definido."""
+        import json as json_lib
+        import os
+        import time as time_lib
+
+        record_dir, _replay = self._l10n_py_fixture_dirs()
+        if not record_dir:
+            return None
+        folder = self._l10n_py_fixture_path(record_dir, operation_type)
+        os.makedirs(folder, exist_ok=True)
+        seq = len([f for f in os.listdir(folder) if f.endswith(".json")]) + 1
+        path = os.path.join(folder, f"{seq:04d}-{int(time_lib.time())}.json")
+        payload = {
+            "provider": self.provider_type,
+            "operation": operation_type,
+            "request": self._l10n_py_redact(request),
+            "status_code": status_code,
+            "body": self._l10n_py_redact(body),
+        }
+        with open(path, "w", encoding="utf-8") as fh:
+            json_lib.dump(payload, fh, ensure_ascii=False, indent=2, default=str)
+        return path
+
+    def _l10n_py_replay_fixture(self, operation_type):
+        """Siguiente fixture no consumido de
+        ``<replay_dir>/<proveedor>/<operación>/`` (orden alfabético), o
+        ``None`` si no hay reproducción configurada. Levanta ``UserError`` si
+        el directorio existe pero se agotaron los fixtures."""
+        import json as json_lib
+        import os
+
+        _record, replay_dir = self._l10n_py_fixture_dirs()
+        if not replay_dir:
+            return None
+        folder = self._l10n_py_fixture_path(replay_dir, operation_type)
+        if not os.path.isdir(folder):
+            raise UserError(
+                _("Reproducción de fixtures: no hay grabaciones en %s") % folder
+            )
+        cursors = self.env.registry.__dict__.setdefault("_l10n_py_replay_cursor", {})
+        files = sorted(f for f in os.listdir(folder) if f.endswith(".json"))
+        index = cursors.get(folder, 0)
+        if index >= len(files):
+            raise UserError(
+                _("Reproducción de fixtures: se agotaron las grabaciones de %s")
+                % folder
+            )
+        cursors[folder] = index + 1
+        with open(os.path.join(folder, files[index]), encoding="utf-8") as fh:
+            fixture = json_lib.load(fh)
+        body = fixture.get("body")
+        if isinstance(body, str) and body.lstrip().startswith("<"):
+            body = body.encode("utf-8")
+        return {"status_code": int(fixture.get("status_code") or 200), "body": body}
+
+    @api.model
+    def _l10n_py_reset_replay(self):
+        self.env.registry.__dict__.pop("_l10n_py_replay_cursor", None)
 
     def _l10n_py_rest_log(
         self,

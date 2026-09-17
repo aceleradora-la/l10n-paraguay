@@ -65,10 +65,14 @@ class ResPartner(models.Model):
 
     l10n_py_doc_type = fields.Selection(
         [
-            ("1", "Cédula de Identidad"),
+            # códigos iTipIDRec del MT v150 (catálogo D024)
+            ("1", "Cédula paraguaya"),
             ("2", "Pasaporte"),
-            ("3", "Carnet de Residencia"),
-            ("4", "Innominado"),
+            ("3", "Cédula extranjera"),
+            ("4", "Carnet de residencia"),
+            ("5", "Innominado"),
+            ("6", "Tarjeta diplomática de exoneración fiscal"),
+            ("9", "Otro"),
         ],
         string="Tipo de Documento de Identidad",
         help="Tipo de documento de identidad para no contribuyentes (SIFEN D024)",

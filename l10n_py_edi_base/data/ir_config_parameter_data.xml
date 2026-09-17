@@ -21,6 +21,16 @@
         <field name="key">l10n_py.kude_engine</field>
         <field name="value">qweb</field>
     </record>
+    <!-- Homologación: grabar respuestas reales (redactadas) o reproducirlas.
+         Vacíos = comportamiento normal. Ver docs/homologacion.md. -->
+    <record id="param_record_dir" model="ir.config_parameter">
+        <field name="key">l10n_py.edi.record_dir</field>
+        <field name="value" />
+    </record>
+    <record id="param_replay_dir" model="ir.config_parameter">
+        <field name="key">l10n_py.edi.replay_dir</field>
+        <field name="value" />
+    </record>
     <!-- Documentos procesados por corrida del cron de estado -->
     <record id="param_cron_batch_size" model="ir.config_parameter">
         <field name="key">l10n_py.cron_batch_size</field>
